@@ -1,16 +1,7 @@
-## Step 18: Meta-analysis and Sensitivity Analysis
 library(meta)
 library(metafor)
 library(dplyr)
 library(ggplot2)
-
-cat("============================================================\n")
-cat("Step 18: Meta-analysis and Sensitivity Analysis\n")
-cat("============================================================\n\n")
-
-## ============================================================
-## 1. Load external validation performance table
-## ============================================================
 
 perf_table <- read.csv("External_Validation_Performance.csv",
                        stringsAsFactors = FALSE)
@@ -224,3 +215,4 @@ save(meta_data, meta_result, weight_data,
      file = "step18_meta_analysis_results.RData")
 
 cat("\nStep 18 complete. Meta-analysis results and figures saved.\n")
+
