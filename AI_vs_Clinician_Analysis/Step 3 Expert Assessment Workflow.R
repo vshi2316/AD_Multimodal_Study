@@ -21,9 +21,7 @@ excel_template_file <- file.path(output_dir, "Expert_Assessment_Summary.xlsx")
 
 # AI prediction file paths (priority order)
 ai_pred_files <- c(
-  file.path(output_dir, "AI_Predictions_Optimized.csv"),
-  file.path(output_dir, "AI_Predictions_Final.csv"),
-  file.path(output_dir, "AI_Predictions.csv")
+  file.path(output_dir, "AI_Predictions_Final.csv")
 )
 
 # Create required directories
@@ -666,3 +664,4 @@ cat(sprintf("  2. Expert instructions: %s\n", instructions_file))
 cat(sprintf("  3. Cleaned expert data: %s\n", cleaned_data_file))
 cat(sprintf("  4. Summary report: %s\n", report_file))
 cat("\nNext steps: Compare expert assessments with AI prediction results\n")
+
