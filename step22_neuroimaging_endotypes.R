@@ -5,6 +5,7 @@ library(ggplot2)
 library(patchwork)
 library(ggseg)
 library(ggsegYeo2011)
+library(stringr) # Added for string detection in Part 4.5
 
 cat("================================================================================\n")
 cat("Step 23: Neuroimaging Endotype Characterization\n")
@@ -33,6 +34,12 @@ data <- data_raw %>%
   select(ID, Subtype, all_of(clinical_features), all_of(mri_features),
          all_of(covariates), Gender) %>%
   drop_na()
+
+# Calculate global composite metrics for disproportionate atrophy analysis (Part 4.5)
+ta_features <- str_subset(mri_features, "_TA$")
+cv_features <- str_subset(mri_features, "_CV$")
+data$Global_TA_Composite <- rowMeans(data[, ta_features], na.rm = TRUE)
+data$Global_CV_Composite <- rowMeans(data[, cv_features], na.rm = TRUE)
 
 cat(sprintf("Complete data: %d samples\n", nrow(data)))
 cat("Endotype distribution:\n")
@@ -197,6 +204,92 @@ p_stage <- stage_independence %>%
 
 ggsave("Figure_Stage_Independence.pdf", p_stage, width = 10, height = 7, dpi = 300)
 ggsave("Figure_Stage_Independence.png", p_stage, width = 10, height = 7, dpi = 300)
+
+## ============================================================================
+## Part 4.1: Disproportionate Atrophy Analysis (Logic Gap Fix)
+## ============================================================================
+cat("\nPART 4.1: DISPROPORTIONATE ATROPHY ANALYSIS (Logic Gap Fix)\n")
+cat("Hypothesis: High-Risk subtype shows atrophy > expected for global load\n")
+cat(paste(rep("=", 78), collapse = ""), "\n", sep="")
+
+disprop_stats_list <- list()
+disprop_residuals_df <- data.frame()
+
+for(feat in mri_features) {
+  # Determine global composite measure based on feature type
+  is_thickness <- str_detect(feat, "_TA$")
+  global_measure <- if(is_thickness) "Global_TA_Composite" else "Global_CV_Composite"
+  
+  # Regression model to remove global atrophy, age, and gender effects
+  formula_str <- paste(feat, "~", global_measure, "+ Age + Gender")
+  model_resid <- lm(as.formula(formula_str), data = data)
+  
+  # Extract standardized residuals (W-score proxy)
+  # Positive = thicker/larger than expected; Negative = more atrophic than expected
+  residuals_std <- rstandard(model_resid)
+  
+  # Prepare data for ANOVA on residuals
+  temp_data <- data
+  temp_data$Residual <- residuals_std
+  
+  # Test residual differences across subtypes
+  anova_res <- aov(Residual ~ Subtype, data = temp_data)
+  summ <- summary(anova_res)[[1]]
+  
+  # Extract statistical metrics
+  f_val <- summ["Subtype", "F value"]
+  p_val <- summ["Subtype", "Pr(>F)"]
+  ss_between <- summ["Subtype", "Sum Sq"]
+  ss_total <- sum(summ[, "Sum Sq"])
+  eta_sq_resid <- ss_between / ss_total
+  
+  # Save statistical results
+  disprop_stats_list[[feat]] <- data.frame(
+    Feature = feat,
+    Global_Control = global_measure,
+    F_value_Resid = f_val,
+    P_value_Resid = p_val,
+    Eta2_Resid = eta_sq_resid,
+    Significant_Topology = ifelse(p_val < 0.05, "Yes", "No")
+  )
+  
+  # Save residual data for visualization
+  feat_resids <- data.frame(
+    ID = data$ID,
+    Subtype = data$Subtype,
+    Feature = feat,
+    Residual_W_Score = residuals_std
+  )
+  disprop_residuals_df <- rbind(disprop_residuals_df, feat_resids)
+}
+
+# Combine and export statistics
+disprop_stats <- bind_rows(disprop_stats_list)
+cat("Disproportionate atrophy analysis results:\n")
+print(disprop_stats, row.names = FALSE)
+write.csv(disprop_stats, "Disproportionate_Atrophy_Stats.csv", row.names = FALSE)
+
+# Prepare visualization data
+plot_data_residuals <- disprop_residuals_df
+plot_data_residuals$Region_Label <- str_remove_all(plot_data_residuals$Feature, "_TA|_CV|Right")
+
+# Visualize disproportionate atrophy
+p_residuals <- ggplot(plot_data_residuals, aes(x = Region_Label, y = Residual_W_Score, fill = Subtype)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_fill_manual(values = c("1" = "#95B3D7", "2" = "#8064A2", "3" = "#C0504D"),
+                    name = "Risk Subtype") +
+  labs(title = "Topological Specificity (Disproportionate Atrophy)",
+       subtitle = "Residuals after controlling for Global Atrophy, Age, and Sex\n(Negative values = Specific Atrophy)",
+       y = "Standardized Residuals (W-score proxy)",
+       x = "Brain Region") +
+  theme_classic(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.title = element_text(face = "bold"))
+
+ggsave("Figure_Disproportionate_Atrophy.pdf", p_residuals, width = 10, height = 6, dpi = 300)
+ggsave("Figure_Disproportionate_Atrophy.png", p_residuals, width = 10, height = 6, dpi = 300)
+cat("✓ Disproportionate atrophy analysis completed\n\n")
 
 ## ============================================================================
 ## Part 5: Brain Region to Yeo7 Network Mapping
@@ -422,7 +515,11 @@ report <- c(
           sum(stage_independence$Stage_Independent == "Yes"), 
           nrow(stage_independence)),
   "",
-  "4. Yeo7 Network Involvement:",
+  "4. Disproportionate Atrophy:",
+  sprintf("   - %d/%d features show significant topological specificity (residual analysis)",
+          sum(disprop_stats$Significant_Topology == "Yes"), nrow(disprop_stats)),
+  "",
+  "5. Yeo7 Network Involvement:",
   sprintf("   - %d networks show significant endotype differences", 
           nrow(network_effects)),
   sprintf("   - Strongest network: %s (η²=%.3f)", 
@@ -432,11 +529,13 @@ report <- c(
   "  CSV: Clinical_Homogeneity_Results.csv",
   "  CSV: MRI_Heterogeneity_Results.csv",
   "  CSV: Stage_Independence_Results.csv",
+  "  CSV: Disproportionate_Atrophy_Stats.csv",
   "  CSV: Region_to_Yeo7_Mapping.csv",
   "  CSV: Yeo7_Network_Effects.csv",
   "  PDF/PNG: Figure_Clinical_Homogeneity",
   "  PDF/PNG: Figure_MRI_Heterogeneity",
   "  PDF/PNG: Figure_Stage_Independence",
+  "  PDF/PNG: Figure_Disproportionate_Atrophy",
   "  PDF/PNG: Figure_Brain_Yeo7_Standard",
   "  PDF/PNG: Figure_Brain_Yeo7_EffectSizes",
   "  PDF/PNG: Figure_Brain_Yeo7_Significant",
