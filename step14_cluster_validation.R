@@ -14,10 +14,6 @@ cat("========================================================================\n\
 ## PART 1: Consensus Clustering
 ## ========================================================================
 
-cat("========================================================================\n")
-cat("PART 1: Consensus Clustering Analysis\n")
-cat("========================================================================\n\n")
-
 ## Load data
 adni_data <- read.csv("Cohort_A_Integrated.csv", stringsAsFactors = FALSE)
 
@@ -146,11 +142,6 @@ write.csv(final_consensus, "Final_Consensus_Clusters_K3.csv", row.names = FALSE)
 ## ========================================================================
 ## PART 2: Bootstrap Stability Analysis
 ## ========================================================================
-
-cat("========================================================================\n")
-cat("PART 2: Bootstrap Stability Analysis\n")
-cat("========================================================================\n\n")
-
 ## Check if cluster results exist
 if (file.exists("cluster_results.csv") && file.exists("VAE_latent_embeddings.csv")) {
   
@@ -314,10 +305,6 @@ if (file.exists("cluster_results.csv") && file.exists("VAE_latent_embeddings.csv
 ## PART 3: Advanced Bootstrap Validation (PAM-based)
 ## ========================================================================
 
-cat("========================================================================\n")
-cat("PART 3: PAM-based Bootstrap Validation\n")
-cat("========================================================================\n\n")
-
 ## Feature selection for PAM clustering
 feature_cols <- c("Age", "Gender", "Education", "MMSE_Baseline",
                   "APOE4_Positive", "APOE4_Copies")
@@ -437,10 +424,6 @@ if (length(available_features) > 0) {
 ## PART 4: Summary Report
 ## ========================================================================
 
-cat("========================================================================\n")
-cat("PART 4: Comprehensive Summary\n")
-cat("========================================================================\n\n")
-
 summary_lines <- c(
   "Cluster Validation Report",
   "=========================",
@@ -532,3 +515,4 @@ cat("Cluster Validation Complete!\n")
 cat("========================================================================\n")
 cat("\nAll validation methods executed successfully.\n")
 cat("Report saved: Cluster_Validation_Report.txt\n")
+
