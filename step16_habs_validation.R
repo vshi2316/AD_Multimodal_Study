@@ -1,5 +1,3 @@
-## Step 16: HABS External Validation (Parts 1–3)
-
 library(pROC)
 library(dplyr)
 library(ggplot2)
@@ -621,3 +619,4 @@ save(dca_results, file = "step16_habs_part3_results.RData")
 
 cat("\nPart 3 complete. Figures and results saved.\n")
 cat("Step 16 finished.\n")
+
