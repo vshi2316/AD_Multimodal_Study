@@ -1,7 +1,3 @@
-#!/usr/bin/env Rscript
-# Step 3: Expert Assessment Workflow
-# Generate expert assessment forms and validate collected expert data
-
 library(tidyverse)
 library(readr)
 library(writexl)
@@ -425,3 +421,4 @@ if (!file.exists(excel_template_file)) {
 }
 
 cat("\nStep 3 complete.\n")
+
