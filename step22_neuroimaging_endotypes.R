@@ -3,12 +3,7 @@ library(ggplot2)
 library(patchwork)
 library(ggseg)
 library(ggsegYeo2011)
-library(stringr) # Added for string detection in Part 4.5
-
-cat("================================================================================\n")
-cat("Step 23: Neuroimaging Endotype Characterization\n")
-cat("================================================================================\n\n")
-
+library(stringr) 
 ## ============================================================================
 ## Part 1: Data Loading and Preparation
 ## ============================================================================
@@ -546,4 +541,5 @@ report <- c(
 writeLines(report, "Step23_Analysis_Report.txt")
 cat(paste(report, collapse = "\n"))
 cat("\n\n================================================================================\n")
+
 
