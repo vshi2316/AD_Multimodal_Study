@@ -1,5 +1,3 @@
-## Step 23: Neuroimaging Endotype Characterization
-
 library(tidyverse)
 library(ggplot2)
 library(patchwork)
@@ -548,3 +546,4 @@ report <- c(
 writeLines(report, "Step23_Analysis_Report.txt")
 cat(paste(report, collapse = "\n"))
 cat("\n\n================================================================================\n")
+
