@@ -1,11 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-Step 2: AI Prediction - VAE Risk Stratification Model
-CRITICAL: Implements strict frozen pipeline strategy to prevent data leakage
-All preprocessing parameters fitted on training set only
-"""
-
 import pandas as pd
 import numpy as np
 import os
@@ -473,3 +465,4 @@ with open(report_file, 'w', encoding='utf-8') as f:
 
 print(f"Report saved: {report_file}")
 print("\nStep 2 complete.")
+
