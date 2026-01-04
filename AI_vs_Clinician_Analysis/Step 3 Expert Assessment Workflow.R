@@ -3,7 +3,6 @@ library(readr)
 library(writexl)
 library(readxl)
 
-cat("Step 3: Expert Assessment Workflow\n")
 cat(strrep("=", 70), "\n\n")
 
 output_dir <- "AI_vs_Clinician_Test"
@@ -421,4 +420,5 @@ if (!file.exists(excel_template_file)) {
 }
 
 cat("\nStep 3 complete.\n")
+
 
