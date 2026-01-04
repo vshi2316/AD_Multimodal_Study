@@ -1,8 +1,3 @@
-#!/usr/bin/env Rscript
-# Step 1: Independent Test Set Preparation
-# Objective: Filter high-quality multimodal MCI cases for independent testing
-# CRITICAL: No imputation using test set statistics - preserve NA for frozen pipeline
-
 library(tidyverse)
 library(readr)
 
@@ -182,3 +177,4 @@ cat(sprintf("  AD converters: %d (%.1f%%)\n",
             mean(output_df_final$AD_Conversion)*100))
 cat(sprintf("  MRI features: %d\n", length(st_cols)))
 cat("\nStep 1 complete.\n")
+
