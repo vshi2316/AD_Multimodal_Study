@@ -4,11 +4,6 @@ library(ggplot2)
 library(gridExtra)
 library(logistf)
 library(PRROC)
-
-cat("============================================================\n")
-cat("Step 16: HABS External Validation\n")
-cat("============================================================\n\n")
-
 ## ============================================================
 ## Part 1: Data preparation and Firth logistic models
 ## ============================================================
@@ -619,4 +614,5 @@ save(dca_results, file = "step16_habs_part3_results.RData")
 
 cat("\nPart 3 complete. Figures and results saved.\n")
 cat("Step 16 finished.\n")
+
 
