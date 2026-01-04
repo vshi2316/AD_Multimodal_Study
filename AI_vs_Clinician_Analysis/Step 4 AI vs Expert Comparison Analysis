@@ -1,7 +1,3 @@
-#!/usr/bin/env Rscript
-# Step 4: AI vs Expert Comparison Analysis
-# Nature Communications Standard Analysis
-
 library(tidyverse)
 library(pROC)
 library(ggplot2)
@@ -658,3 +654,4 @@ cat("\nStep 4 complete.\n")
 cat(strrep("=", 70), "\n")
 cat("\nAll figures are publication-ready (600 DPI, Nature Communications style)\n")
 cat(strrep("=", 70), "\n")
+
