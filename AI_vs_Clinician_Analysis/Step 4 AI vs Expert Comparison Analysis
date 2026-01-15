@@ -5,101 +5,174 @@ library(gridExtra)
 library(scales)
 library(readr)
 library(writexl)
+library(irr)        
+library(optparse)
 
-set.seed(2024)
-
-cat(strrep("=", 70), "\n")
-cat("Step 4: AI vs Expert Comparison Analysis\n")
-cat(strrep("=", 70), "\n\n")
-
-output_dir <- "AI_vs_Clinician_Test"
-figures_dir <- file.path(output_dir, "Figures")
-dir.create(figures_dir, showWarnings = FALSE, recursive = TRUE)
-
-cat("Loading data...\n")
-ai_file <- file.path(output_dir, "AI_Predictions_Final.csv")
-expert_file <- file.path(output_dir, "Expert_Predictions_Long.csv")
-test_file <- file.path(output_dir, "independent_test_set.csv")
-
-if (!file.exists(ai_file)) stop(sprintf("ERROR: AI predictions not found: %s", ai_file))
-if (!file.exists(expert_file)) stop(sprintf("ERROR: Expert predictions not found: %s", expert_file))
-if (!file.exists(test_file)) stop(sprintf("ERROR: Test set not found: %s", test_file))
-
-ai_pred <- read_csv(ai_file, show_col_types = FALSE)
-expert_pred <- read_csv(expert_file, show_col_types = FALSE)
-test_data <- read_csv(test_file, show_col_types = FALSE)
-
-cat(sprintf("  AI predictions: %d cases\n", nrow(ai_pred)))
-cat(sprintf("  Expert assessments: %d rows\n", nrow(expert_pred)))
-cat(sprintf("  Test set: %d cases\n", nrow(test_data)))
-
-cat("\nData Preparation\n")
-cat(strrep("=", 70), "\n")
-
-y_true <- test_data$AD_Conversion
-n_cases <- length(y_true)
-n_converters <- sum(y_true == 1, na.rm = TRUE)
-n_non_converters <- sum(y_true == 0, na.rm = TRUE)
-
-cat(sprintf("  Cases: %d (Converters: %d, Non-converters: %d)\n",
-            n_cases, n_converters, n_non_converters))
-cat(sprintf("  Conversion rate: %.1f%%\n", mean(y_true) * 100))
-
-ai_prob <- ai_pred$AI_Probability
-cat(sprintf("  AI predictions: mean=%.1f%%, range=[%.1f%%, %.1f%%]\n",
-            mean(ai_prob)*100, min(ai_prob)*100, max(ai_prob)*100))
-
-expert_stage1 <- expert_pred %>%
-  group_by(CaseID) %>%
-  summarise(Expert_Stage1_Prob = mean(Stage1_Prob, na.rm = TRUE),
-            Expert_Stage1_SD = sd(Stage1_Prob, na.rm = TRUE),
-            .groups = 'drop')
-
-expert_stage2 <- expert_pred %>%
-  group_by(CaseID) %>%
-  summarise(Expert_Stage2_Prob = mean(Stage2_Prob, na.rm = TRUE),
-            Expert_Stage2_SD = sd(Stage2_Prob, na.rm = TRUE),
-            .groups = 'drop')
-
-experts <- unique(expert_pred$Expert)
-n_experts <- length(experts)
-cat(sprintf("  Number of experts: %d\n", n_experts))
-
-comparison_data <- test_data %>%
-  select(ID, RID, AD_Conversion, Age, Gender, MMSE_Baseline, APOE4_Positive) %>%
-  left_join(ai_pred %>% select(CaseID, AI_Probability), by = c("ID" = "CaseID")) %>%
-  left_join(expert_stage1, by = c("ID" = "CaseID")) %>%
-  left_join(expert_stage2, by = c("ID" = "CaseID"))
-
-comparison_data <- comparison_data %>%
-  filter(!is.na(AI_Probability) & !is.na(Expert_Stage1_Prob) & !is.na(Expert_Stage2_Prob))
-
-cat(sprintf("  Final comparison dataset: %d cases\n", nrow(comparison_data)))
-
-theme_nc <- function() {
-  theme_bw(base_size = 12) +
-    theme(
-      panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
-      panel.grid.minor = element_blank(),
-      panel.border = element_rect(color = "black", linewidth = 1),
-      axis.text = element_text(color = "black", size = 11),
-      axis.title = element_text(face = "bold", size = 12),
-      legend.position = "right",
-      legend.background = element_rect(fill = "white", color = "black", linewidth = 0.5),
-      legend.title = element_text(face = "bold", size = 11),
-      legend.text = element_text(size = 10),
-      plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
-      strip.background = element_rect(fill = "gray95", color = "black"),
-      strip.text = element_text(face = "bold", size = 11)
-    )
-}
-
-colors_nc <- list(
-  AI = "#E31A1C",
-  Expert_Stage1 = "#1F78B4",
-  Expert_Stage2 = "#33A02C"
+# ==============================================================================
+# Parse Command Line Arguments
+# ==============================================================================
+option_list <- list(
+  make_option(c("--ai_file"), type = "character", 
+              default = "./AI_vs_Clinician_Test/AI_Predictions_Final.csv",
+              help = "Path to AI predictions CSV [default: %default]"),
+  make_option(c("--expert_file"), type = "character", 
+              default = "./AI_vs_Clinician_Test/Expert_Predictions_Long.csv",
+              help = "Path to expert predictions CSV [default: %default]"),
+  make_option(c("--test_file"), type = "character", 
+              default = "./AI_vs_Clinician_Test/independent_test_set.csv",
+              help = "Path to independent test set CSV [default: %default]"),
+  make_option(c("--output_dir"), type = "character", 
+              default = "./AI_vs_Clinician_Test",
+              help = "Output directory [default: %default]"),
+  make_option(c("--n_bootstrap"), type = "integer", default = 2000,
+              help = "Number of bootstrap iterations (Methods 2.9: 2000) [default: %default]"),
+  make_option(c("--figure_dpi"), type = "integer", default = 600,
+              help = "Figure DPI for publication [default: %default]"),
+  make_option(c("--seed"), type = "integer", default = 2024,
+              help = "Random seed [default: %default]")
 )
 
+opt_parser <- OptionParser(option_list = option_list)
+opt <- parse_args(opt_parser)
+
+set.seed(opt$seed)
+
+# Create output directories
+dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
+figures_dir <- file.path(opt$output_dir, "Figures")
+dir.create(figures_dir, showWarnings = FALSE, recursive = TRUE)
+
+cat(strrep("=", 70), "\n")
+cat("Step 4: AI vs Expert Comparison Analysis (Methods 2.9)\n")
+cat(strrep("=", 70), "\n\n")
+
+# ==============================================================================
+# Methods 2.9: Statistical Functions
+# ==============================================================================
+
+#' Bootstrap AUC with 95% CI (Methods 2.9: 2000 iterations)
+#' @param y_true True labels
+#' @param y_prob Predicted probabilities
+#' @param n_boot Number of bootstrap iterations
+#' @return List with AUC, CI_lower, CI_upper
+bootstrap_auc_ci <- function(y_true, y_prob, n_boot = 2000) {
+  aucs <- numeric(n_boot)
+  n <- length(y_true)
+  
+  for (i in 1:n_boot) {
+    idx <- sample(1:n, n, replace = TRUE)
+    y_true_boot <- y_true[idx]
+    y_prob_boot <- y_prob[idx]
+    
+    # Ensure both classes present
+    if (length(unique(y_true_boot)) == 2) {
+      roc_boot <- roc(y_true_boot, y_prob_boot, quiet = TRUE)
+      aucs[i] <- as.numeric(auc(roc_boot))
+    } else {
+      aucs[i] <- NA
+    }
+  }
+  
+  aucs <- aucs[!is.na(aucs)]
+  
+  list(
+    auc = as.numeric(auc(roc(y_true, y_prob, quiet = TRUE))),
+    ci_lower = quantile(aucs, 0.025),
+    ci_upper = quantile(aucs, 0.975),
+    se = sd(aucs)
+  )
+}
+
+#' Hosmer-Lemeshow Goodness-of-Fit Test (Methods 2.9)
+#' P-value > 0.05 indicates adequate calibration
+#' @param y_true True labels
+#' @param y_prob Predicted probabilities
+#' @param n_groups Number of groups (default 10)
+hosmer_lemeshow_test <- function(y_true, y_prob, n_groups = 10) {
+  df <- data.frame(y_true = y_true, y_prob = y_prob)
+  df$decile <- cut(df$y_prob, breaks = quantile(df$y_prob, probs = seq(0, 1, length.out = n_groups + 1)),
+                   include.lowest = TRUE, labels = FALSE)
+  
+  hl_data <- df %>%
+    group_by(decile) %>%
+    summarise(
+      observed = sum(y_true),
+      expected = sum(y_prob),
+      n = n(),
+      .groups = 'drop'
+    )
+  
+  # Chi-square statistic
+  chi2 <- sum((hl_data$observed - hl_data$expected)^2 / 
+              (hl_data$expected * (1 - hl_data$expected/hl_data$n) + 1e-10))
+  
+  dof <- max(1, nrow(hl_data) - 2)
+  p_value <- 1 - pchisq(chi2, dof)
+  
+  list(chi2 = chi2, df = dof, p_value = p_value)
+}
+
+#' Calculate NRI (Net Reclassification Improvement) (Methods 2.9)
+#' @param y_true True labels
+#' @param prob_old Old model probabilities
+#' @param prob_new New model probabilities
+#' @param thresholds Risk thresholds
+calculate_nri <- function(y_true, prob_old, prob_new, thresholds = c(0, 0.10, 0.20, 1.0)) {
+  
+  # Classify into risk categories
+  classify <- function(prob) {
+    cut(prob, breaks = thresholds, labels = FALSE, include.lowest = TRUE)
+  }
+  
+  cat_old <- classify(prob_old)
+  cat_new <- classify(prob_new)
+  
+  # Events (converters)
+  events <- y_true == 1
+  non_events <- y_true == 0
+  
+  # NRI for events
+  up_events <- sum(cat_new[events] > cat_old[events], na.rm = TRUE)
+  down_events <- sum(cat_new[events] < cat_old[events], na.rm = TRUE)
+  nri_events <- (up_events - down_events) / sum(events)
+  
+  # NRI for non-events
+  up_non_events <- sum(cat_new[non_events] > cat_old[non_events], na.rm = TRUE)
+  down_non_events <- sum(cat_new[non_events] < cat_old[non_events], na.rm = TRUE)
+  nri_non_events <- (down_non_events - up_non_events) / sum(non_events)
+  
+  # Total NRI
+  nri_total <- nri_events + nri_non_events
+  
+  list(
+    NRI_total = nri_total,
+    NRI_events = nri_events,
+    NRI_non_events = nri_non_events
+  )
+}
+
+#' Calculate IDI (Integrated Discrimination Improvement) (Methods 2.9)
+#' @param y_true True labels
+#' @param prob_old Old model probabilities
+#' @param prob_new New model probabilities
+calculate_idi <- function(y_true, prob_old, prob_new) {
+  events <- y_true == 1
+  non_events <- y_true == 0
+  
+  # Mean probability change
+  is_events <- mean(prob_new[events]) - mean(prob_old[events])
+  is_non_events <- mean(prob_old[non_events]) - mean(prob_new[non_events])
+  
+  idi <- is_events + is_non_events
+  
+  list(
+    IDI = idi,
+    IS_events = is_events,
+    IS_non_events = is_non_events
+  )
+}
+
+#' Calculate performance metrics at a given threshold
 calculate_metrics <- function(y_true, y_prob, threshold = 0.5) {
   y_pred <- ifelse(y_prob >= threshold, 1, 0)
   tp <- sum(y_pred == 1 & y_true == 1)
@@ -119,276 +192,7 @@ calculate_metrics <- function(y_true, y_prob, threshold = 0.5) {
   )
 }
 
-cat("\nSection 1: AUC Analysis with DeLong Test\n")
-cat(strrep("=", 70), "\n")
-
-roc_ai <- roc(comparison_data$AD_Conversion, comparison_data$AI_Probability, quiet = TRUE)
-roc_expert_s1 <- roc(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, quiet = TRUE)
-roc_expert_s2 <- roc(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, quiet = TRUE)
-
-auc_ai <- as.numeric(auc(roc_ai))
-auc_expert_s1 <- as.numeric(auc(roc_expert_s1))
-auc_expert_s2 <- as.numeric(auc(roc_expert_s2))
-
-ci_ai <- ci.auc(roc_ai)
-ci_expert_s1 <- ci.auc(roc_expert_s1)
-ci_expert_s2 <- ci.auc(roc_expert_s2)
-
-cat("\nAUC Results:\n")
-cat(sprintf("  AI Model:        %.3f [95%% CI: %.3f-%.3f]\n", auc_ai, ci_ai[1], ci_ai[3]))
-cat(sprintf("  Expert Stage 1:  %.3f [95%% CI: %.3f-%.3f]\n", auc_expert_s1, ci_expert_s1[1], ci_expert_s1[3]))
-cat(sprintf("  Expert Stage 2:  %.3f [95%% CI: %.3f-%.3f]\n", auc_expert_s2, ci_expert_s2[1], ci_expert_s2[3]))
-
-mri_gain <- auc_expert_s2 - auc_expert_s1
-cat(sprintf("\n  MRI Information Gain: +%.3f AUC (%.1f%% improvement)\n",
-            mri_gain, 100 * mri_gain / auc_expert_s1))
-
-cat("\nDeLong Tests:\n")
-
-delong_s1 <- roc.test(roc_ai, roc_expert_s1, method = "delong")
-cat(sprintf("\nAI vs Expert Stage 1:\n"))
-cat(sprintf("  AUC difference: %.3f\n", auc_ai - auc_expert_s1))
-cat(sprintf("  Z-statistic: %.3f\n", delong_s1$statistic))
-cat(sprintf("  P-value: %.4f %s\n", delong_s1$p.value,
-            ifelse(delong_s1$p.value < 0.001, "***",
-                   ifelse(delong_s1$p.value < 0.01, "**",
-                          ifelse(delong_s1$p.value < 0.05, "*", "n.s.")))))
-
-delong_s2 <- roc.test(roc_ai, roc_expert_s2, method = "delong")
-cat(sprintf("\nAI vs Expert Stage 2:\n"))
-cat(sprintf("  AUC difference: %.3f\n", auc_ai - auc_expert_s2))
-cat(sprintf("  Z-statistic: %.3f\n", delong_s2$statistic))
-cat(sprintf("  P-value: %.4f %s\n", delong_s2$p.value,
-            ifelse(delong_s2$p.value < 0.001, "***",
-                   ifelse(delong_s2$p.value < 0.01, "**",
-                          ifelse(delong_s2$p.value < 0.05, "*", "n.s.")))))
-
-delong_mri <- roc.test(roc_expert_s1, roc_expert_s2, method = "delong")
-cat(sprintf("\nExpert Stage 1 vs Stage 2 (MRI Effect):\n"))
-cat(sprintf("  AUC difference: %.3f\n", auc_expert_s2 - auc_expert_s1))
-cat(sprintf("  Z-statistic: %.3f\n", delong_mri$statistic))
-cat(sprintf("  P-value: %.4f %s\n", delong_mri$p.value,
-            ifelse(delong_mri$p.value < 0.001, "***",
-                   ifelse(delong_mri$p.value < 0.01, "**",
-                          ifelse(delong_mri$p.value < 0.05, "*", "n.s.")))))
-
-cat("\nKey Relationship Check:\n")
-s1_lt_ai <- auc_expert_s1 < auc_ai
-s2_gt_ai <- auc_expert_s2 > auc_ai
-cat(sprintf("  Expert Stage1 (%.3f) < AI (%.3f): %s\n",
-            auc_expert_s1, auc_ai, ifelse(s1_lt_ai, "YES", "NO")))
-cat(sprintf("  Expert Stage2 (%.3f) > AI (%.3f): %s\n",
-            auc_expert_s2, auc_ai, ifelse(s2_gt_ai, "YES", "NO")))
-
-if (s1_lt_ai && s2_gt_ai) {
-  cat("\n  SUCCESS: Stage1 < AI < Stage2 (NC Standard Met)\n")
-} else {
-  cat("\n  WARNING: Key relationship not satisfied\n")
-}
-
-cat("\nSection 2: Detailed Performance Metrics\n")
-cat(strrep("=", 70), "\n")
-
-coords_ai <- coords(roc_ai, "best", best.method = "youden")
-coords_exp_s1 <- coords(roc_expert_s1, "best", best.method = "youden")
-coords_exp_s2 <- coords(roc_expert_s2, "best", best.method = "youden")
-
-cat(sprintf("\nOptimal Thresholds (Youden's J):\n"))
-cat(sprintf("  AI Model: %.3f\n", coords_ai$threshold))
-cat(sprintf("  Expert Stage 1: %.3f\n", coords_exp_s1$threshold))
-cat(sprintf("  Expert Stage 2: %.3f\n", coords_exp_s2$threshold))
-
-metrics_ai <- calculate_metrics(comparison_data$AD_Conversion,
-                                comparison_data$AI_Probability,
-                                coords_ai$threshold)
-metrics_exp_s1 <- calculate_metrics(comparison_data$AD_Conversion,
-                                    comparison_data$Expert_Stage1_Prob,
-                                    coords_exp_s1$threshold)
-metrics_exp_s2 <- calculate_metrics(comparison_data$AD_Conversion,
-                                    comparison_data$Expert_Stage2_Prob,
-                                    coords_exp_s2$threshold)
-
-cat("\nPerformance at Optimal Threshold:\n")
-cat(sprintf("%-20s %-12s %-15s %-15s\n", "Metric", "AI Model", "Expert S1", "Expert S2"))
-cat(strrep("-", 65), "\n")
-cat(sprintf("%-20s %-12.3f %-15.3f %-15.3f\n", "AUC", auc_ai, auc_expert_s1, auc_expert_s2))
-cat(sprintf("%-20s %-12.1f%% %-15.1f%% %-15.1f%%\n", "Sensitivity",
-            metrics_ai$Sensitivity * 100, metrics_exp_s1$Sensitivity * 100, metrics_exp_s2$Sensitivity * 100))
-cat(sprintf("%-20s %-12.1f%% %-15.1f%% %-15.1f%%\n", "Specificity",
-            metrics_ai$Specificity * 100, metrics_exp_s1$Specificity * 100, metrics_exp_s2$Specificity * 100))
-cat(sprintf("%-20s %-12.1f%% %-15.1f%% %-15.1f%%\n", "Accuracy",
-            metrics_ai$Accuracy * 100, metrics_exp_s1$Accuracy * 100, metrics_exp_s2$Accuracy * 100))
-cat(sprintf("%-20s %-12.1f%% %-15.1f%% %-15.1f%%\n", "PPV",
-            metrics_ai$PPV * 100, metrics_exp_s1$PPV * 100, metrics_exp_s2$PPV * 100))
-cat(sprintf("%-20s %-12.1f%% %-15.1f%% %-15.1f%%\n", "NPV",
-            metrics_ai$NPV * 100, metrics_exp_s1$NPV * 100, metrics_exp_s2$NPV * 100))
-cat(sprintf("%-20s %-12.3f %-15.3f %-15.3f\n", "Brier Score",
-            metrics_ai$Brier, metrics_exp_s1$Brier, metrics_exp_s2$Brier))
-
-cat("\nSection 3: Individual Expert Analysis\n")
-cat(strrep("=", 70), "\n")
-
-expert_auc_results <- data.frame()
-for (exp in experts) {
-  exp_data <- expert_pred %>% filter(Expert == exp)
-  
-  exp_merged <- comparison_data %>%
-    select(ID, AD_Conversion) %>%
-    left_join(exp_data %>% select(CaseID, Stage1_Prob, Stage2_Prob), by = c("ID" = "CaseID")) %>%
-    filter(!is.na(Stage1_Prob) & !is.na(Stage2_Prob))
-  
-  if (nrow(exp_merged) >= 20) {
-    roc_s1 <- roc(exp_merged$AD_Conversion, exp_merged$Stage1_Prob, quiet = TRUE)
-    roc_s2 <- roc(exp_merged$AD_Conversion, exp_merged$Stage2_Prob, quiet = TRUE)
-    
-    auc_s1 <- as.numeric(auc(roc_s1))
-    auc_s2 <- as.numeric(auc(roc_s2))
-    ci_s1 <- ci.auc(roc_s1)
-    ci_s2 <- ci.auc(roc_s2)
-    
-    expert_auc_results <- rbind(expert_auc_results, data.frame(
-      Expert = exp, Stage = "Stage1", AUC = auc_s1,
-      CI_Lower = ci_s1[1], CI_Upper = ci_s1[3], stringsAsFactors = FALSE))
-    expert_auc_results <- rbind(expert_auc_results, data.frame(
-      Expert = exp, Stage = "Stage2", AUC = auc_s2,
-      CI_Lower = ci_s2[1], CI_Upper = ci_s2[3], stringsAsFactors = FALSE))
-    
-    cat(sprintf("  %s: Stage1=%.3f, Stage2=%.3f, MRI Gain=%+.3f\n",
-                exp, auc_s1, auc_s2, auc_s2 - auc_s1))
-  }
-}
-
-if (nrow(expert_auc_results) > 0) {
-  cat("\nExpert AUC Summary:\n")
-  for (stg in c("Stage1", "Stage2")) {
-    stg_data <- expert_auc_results %>% filter(Stage == stg)
-    if (nrow(stg_data) > 0) {
-      cat(sprintf("  %s: Mean=%.3f +/- %.3f, Range=[%.3f, %.3f]\n",
-                  stg, mean(stg_data$AUC), sd(stg_data$AUC),
-                  min(stg_data$AUC), max(stg_data$AUC)))
-    }
-  }
-}
-
-cat("\nSection 4: Generate Publication-Ready Figures (600 DPI)\n")
-cat(strrep("=", 70), "\n")
-
-cat("\nGenerating Figure 1: ROC Curves...\n")
-
-roc_data_ai <- data.frame(
-  FPR = 1 - roc_ai$specificities,
-  TPR = roc_ai$sensitivities,
-  Model = sprintf("AI Model (AUC=%.3f)", auc_ai)
-)
-
-roc_data_exp_s1 <- data.frame(
-  FPR = 1 - roc_expert_s1$specificities,
-  TPR = roc_expert_s1$sensitivities,
-  Model = sprintf("Clinicians Stage 1 (AUC=%.3f)", auc_expert_s1)
-)
-
-roc_data_exp_s2 <- data.frame(
-  FPR = 1 - roc_expert_s2$specificities,
-  TPR = roc_expert_s2$sensitivities,
-  Model = sprintf("Clinicians Stage 2 (AUC=%.3f)", auc_expert_s2)
-)
-
-roc_stage1 <- rbind(roc_data_ai, roc_data_exp_s1)
-p1a <- ggplot(roc_stage1, aes(x = FPR, y = TPR, color = Model)) +
-  geom_line(linewidth = 1.2) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
-  scale_color_manual(values = c(colors_nc$AI, colors_nc$Expert_Stage1)) +
-  labs(x = "False Positive Rate (1 - Specificity)",
-       y = "True Positive Rate (Sensitivity)",
-       title = "A. Stage 1: Clinical Data Only") +
-  coord_equal() +
-  theme_nc() +
-  theme(legend.position = c(0.65, 0.25), legend.key.width = unit(1.5, "cm"))
-
-roc_stage2 <- rbind(roc_data_ai, roc_data_exp_s2)
-p1b <- ggplot(roc_stage2, aes(x = FPR, y = TPR, color = Model)) +
-  geom_line(linewidth = 1.2) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
-  scale_color_manual(values = c(colors_nc$AI, colors_nc$Expert_Stage2)) +
-  labs(x = "False Positive Rate (1 - Specificity)",
-       y = "True Positive Rate (Sensitivity)",
-       title = "B. Stage 2: Clinical + MRI Data") +
-  coord_equal() +
-  theme_nc() +
-  theme(legend.position = c(0.65, 0.25), legend.key.width = unit(1.5, "cm"))
-
-fig1 <- grid.arrange(p1a, p1b, ncol = 2)
-ggsave(file.path(figures_dir, "Figure1_ROC_Comparison.png"), fig1, width = 14, height = 6, dpi = 600)
-ggsave(file.path(figures_dir, "Figure1_ROC_Comparison.pdf"), fig1, width = 14, height = 6)
-cat("  Figure 1 saved\n")
-
-cat("\nGenerating Figure 2: AUC Performance...\n")
-
-auc_summary <- data.frame(
-  Model = c("AI Model", "Clinicians\nStage 1", "Clinicians\nStage 2"),
-  AUC = c(auc_ai, auc_expert_s1, auc_expert_s2),
-  CI_Lower = c(ci_ai[1], ci_expert_s1[1], ci_expert_s2[1]),
-  CI_Upper = c(ci_ai[3], ci_expert_s1[3], ci_expert_s2[3]),
-  Type = c("AI", "Clinician", "Clinician")
-)
-
-auc_summary$Model <- factor(auc_summary$Model,
-                            levels = c("Clinicians\nStage 1", "AI Model", "Clinicians\nStage 2"))
-
-p2 <- ggplot(auc_summary, aes(x = Model, y = AUC, fill = Type)) +
-  geom_bar(stat = "identity", width = 0.7, color = "black", linewidth = 0.5) +
-  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2, linewidth = 0.8) +
-  geom_hline(yintercept = 0.5, linetype = "dashed", color = "gray40", linewidth = 0.6) +
-  geom_text(aes(label = sprintf("%.3f", AUC)), vjust = -0.5, size = 4, fontface = "bold") +
-  scale_fill_manual(values = c("AI" = colors_nc$AI, "Clinician" = colors_nc$Expert_Stage1)) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  labs(x = NULL, y = "Area Under the Curve (AUC)", title = "Diagnostic Performance Comparison") +
-  theme_nc() +
-  theme(legend.position = "none", axis.text.x = element_text(size = 11))
-
-ggsave(file.path(figures_dir, "Figure2_AUC_Barplot.png"), p2, width = 8, height = 6, dpi = 600)
-ggsave(file.path(figures_dir, "Figure2_AUC_Barplot.pdf"), p2, width = 8, height = 6)
-cat("  Figure 2 saved\n")
-
-cat("\nGenerating Figure 3: Calibration Plot...\n")
-
-create_calibration_data <- function(y_true, y_prob, n_bins = 10, model_name = "Model") {
-  bins <- cut(y_prob, breaks = seq(0, 1, length.out = n_bins + 1), include.lowest = TRUE)
-  calib_data <- data.frame(y_true = y_true, y_prob = y_prob, bin = bins) %>%
-    group_by(bin) %>%
-    summarise(Predicted = mean(y_prob), Observed = mean(y_true),
-              Count = n(), SE = sqrt(Observed * (1 - Observed) / n()), .groups = 'drop') %>%
-    filter(Count >= 3)
-  calib_data$Model <- model_name
-  return(calib_data)
-}
-
-calib_ai <- create_calibration_data(comparison_data$AD_Conversion, 
-                                    comparison_data$AI_Probability, model_name = "AI Model")
-calib_exp_s2 <- create_calibration_data(comparison_data$AD_Conversion, 
-                                        comparison_data$Expert_Stage2_Prob, model_name = "Expert Stage 2")
-calib_combined <- rbind(calib_ai, calib_exp_s2)
-
-p3 <- ggplot(calib_combined, aes(x = Predicted, y = Observed, color = Model, shape = Model)) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40", linewidth = 0.8) +
-  geom_point(aes(size = Count), alpha = 0.8) +
-  geom_smooth(method = "loess", se = TRUE, alpha = 0.2, linewidth = 1.2) +
-  scale_color_manual(values = c("AI Model" = colors_nc$AI, "Expert Stage 2" = colors_nc$Expert_Stage2)) +
-  scale_shape_manual(values = c("AI Model" = 16, "Expert Stage 2" = 17)) +
-  scale_size_continuous(range = c(3, 10), name = "N") +
-  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  labs(x = "Predicted Probability", y = "Observed Frequency", title = "Calibration Plot") +
-  coord_equal() +
-  theme_nc() +
-  theme(legend.position = c(0.80, 0.25))
-
-ggsave(file.path(figures_dir, "Figure3_Calibration.png"), p3, width = 8, height = 7, dpi = 600)
-ggsave(file.path(figures_dir, "Figure3_Calibration.pdf"), p3, width = 8, height = 7)
-cat("  Figure 3 saved\n")
-
-cat("\nGenerating Figure 4: Decision Curve Analysis...\n")
-
+#' Calculate net benefit for DCA
 calculate_net_benefit <- function(y_true, y_prob, thresholds) {
   sapply(thresholds, function(pt) {
     if (pt >= 1) return(NA)
@@ -400,258 +204,782 @@ calculate_net_benefit <- function(y_true, y_prob, thresholds) {
   })
 }
 
-thresholds <- seq(0.01, 0.99, 0.01)
-dca_data <- data.frame(
-  Threshold = thresholds,
-  AI = calculate_net_benefit(comparison_data$AD_Conversion, comparison_data$AI_Probability, thresholds),
-  Expert_Stage1 = calculate_net_benefit(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, thresholds),
-  Expert_Stage2 = calculate_net_benefit(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, thresholds),
-  Treat_All = sapply(thresholds, function(pt) {
-    prev <- mean(comparison_data$AD_Conversion)
-    prev - (1-prev) * (pt/(1-pt))
-  }),
-  Treat_None = 0
-)
-
-dca_long <- dca_data %>%
-  pivot_longer(cols = c(AI, Expert_Stage1, Expert_Stage2, Treat_All, Treat_None),
-               names_to = "Strategy", values_to = "NetBenefit") %>%
-  mutate(Strategy = factor(Strategy, 
-                           levels = c("AI", "Expert_Stage2", "Expert_Stage1", "Treat_All", "Treat_None"),
-                           labels = c("AI Model", "Clinicians + MRI", "Clinicians Only", "Treat All", "Treat None")))
-
-p4 <- ggplot(dca_long, aes(x = Threshold, y = NetBenefit, color = Strategy, linetype = Strategy)) +
-  geom_line(linewidth = 1.2) +
-  scale_color_manual(values = c("AI Model" = colors_nc$AI, "Clinicians + MRI" = colors_nc$Expert_Stage2,
-                                "Clinicians Only" = colors_nc$Expert_Stage1,
-                                "Treat All" = "gray50", "Treat None" = "gray30")) +
-  scale_linetype_manual(values = c("AI Model" = "solid", "Clinicians + MRI" = "solid",
-                                   "Clinicians Only" = "dashed",
-                                   "Treat All" = "dotted", "Treat None" = "dotdash")) +
-  scale_x_continuous(limits = c(0, 0.8), breaks = seq(0, 0.8, 0.2)) +
-  scale_y_continuous(limits = c(-0.1, 0.5)) +
-  labs(x = "Threshold Probability", y = "Net Benefit", title = "Decision Curve Analysis") +
-  theme_nc() +
-  theme(legend.position = c(0.75, 0.75))
-
-ggsave(file.path(figures_dir, "Figure4_DCA.png"), p4, width = 9, height = 7, dpi = 600)
-ggsave(file.path(figures_dir, "Figure4_DCA.pdf"), p4, width = 9, height = 7)
-cat("  Figure 4 saved\n")
-
-cat("\nGenerating Figure 5: Individual Expert Performance...\n")
-
-if (nrow(expert_auc_results) > 0) {
-  expert_auc_results$Stage <- factor(expert_auc_results$Stage, levels = c("Stage1", "Stage2"),
-                                     labels = c("Stage 1\n(Clinical Only)", "Stage 2\n(Clinical + MRI)"))
-  
-  p5 <- ggplot(expert_auc_results, aes(x = Expert, y = AUC, fill = Stage)) +
-    geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
-    geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), 
-                  position = position_dodge(width = 0.8), width = 0.2, linewidth = 0.6) +
-    geom_hline(yintercept = auc_ai, linetype = "dashed", color = colors_nc$AI, linewidth = 1) +
-    annotate("text", x = 0.5, y = auc_ai + 0.02, label = sprintf("AI (%.3f)", auc_ai), 
-             hjust = 0, color = colors_nc$AI, fontface = "bold", size = 3.5) +
-    scale_fill_manual(values = c("Stage 1\n(Clinical Only)" = colors_nc$Expert_Stage1, 
-                                 "Stage 2\n(Clinical + MRI)" = colors_nc$Expert_Stage2)) +
-    scale_y_continuous(limits = c(0.4, 0.9), breaks = seq(0.4, 0.9, 0.1)) +
-    labs(x = NULL, y = "Area Under the Curve (AUC)", 
-         title = "Individual Expert Performance", fill = "Evaluation Stage") +
-    theme_nc() +
-    theme(legend.position = "bottom")
-  
-  ggsave(file.path(figures_dir, "Figure5_Expert_Individual.png"), p5, width = 10, height = 6, dpi = 600)
-  ggsave(file.path(figures_dir, "Figure5_Expert_Individual.pdf"), p5, width = 10, height = 6)
-  cat("  Figure 5 saved\n")
+#' Nature Communications theme for ggplot
+theme_nc <- function() {
+  theme_bw(base_size = 12) +
+    theme(
+      panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      panel.border = element_rect(color = "black", linewidth = 1),
+      axis.text = element_text(color = "black", size = 11),
+      axis.title = element_text(face = "bold", size = 12),
+      legend.position = "right",
+      legend.background = element_rect(fill = "white", color = "black", linewidth = 0.5),
+      legend.title = element_text(face = "bold", size = 11),
+      legend.text = element_text(size = 10),
+      plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+      strip.background = element_rect(fill = "gray95", color = "black"),
+      strip.text = element_text(face = "bold", size = 11)
+    )
 }
 
-cat("\nGenerating Figure 6: Probability Distribution...\n")
-
-prob_data <- comparison_data %>%
-  select(ID, AD_Conversion, AI_Probability, Expert_Stage1_Prob, Expert_Stage2_Prob) %>%
-  pivot_longer(cols = c(AI_Probability, Expert_Stage1_Prob, Expert_Stage2_Prob),
-               names_to = "Model", values_to = "Probability") %>%
-  mutate(Model = factor(Model, 
-                        levels = c("AI_Probability", "Expert_Stage1_Prob", "Expert_Stage2_Prob"),
-                        labels = c("AI Model", "Clinicians Stage 1", "Clinicians Stage 2")),
-         Outcome = factor(AD_Conversion, levels = c(0, 1), labels = c("Non-converter", "Converter")))
-
-p6 <- ggplot(prob_data, aes(x = Probability, fill = Outcome)) +
-  geom_density(alpha = 0.6) +
-  facet_wrap(~ Model, ncol = 1) +
-  scale_fill_manual(values = c("Non-converter" = "#4DAF4A", "Converter" = "#E41A1C")) +
-  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  labs(x = "Predicted Probability", y = "Density", 
-       title = "Probability Distribution by Outcome", fill = "Actual Outcome") +
-  theme_nc() +
-  theme(legend.position = "bottom", strip.text = element_text(size = 11))
-
-ggsave(file.path(figures_dir, "Figure6_Probability_Distribution.png"), p6, width = 8, height = 10, dpi = 600)
-ggsave(file.path(figures_dir, "Figure6_Probability_Distribution.pdf"), p6, width = 8, height = 10)
-cat("  Figure 6 saved\n")
-
-cat("\nGenerating Figure 7: MRI Impact...\n")
-
-mri_impact_data <- comparison_data %>%
-  mutate(Prob_Change = Expert_Stage2_Prob - Expert_Stage1_Prob,
-         Outcome = factor(AD_Conversion, levels = c(0, 1), labels = c("Non-converter", "Converter")))
-
-p7 <- ggplot(mri_impact_data, aes(x = Expert_Stage1_Prob, y = Expert_Stage2_Prob, color = Outcome)) +
-  geom_point(alpha = 0.7, size = 2.5) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40", linewidth = 0.8) +
-  scale_color_manual(values = c("Non-converter" = "#4DAF4A", "Converter" = "#E41A1C")) +
-  scale_x_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
-  labs(x = "Stage 1 Probability (Clinical Only)", y = "Stage 2 Probability (Clinical + MRI)",
-       title = "MRI Impact on Expert Assessment", color = "Actual Outcome") +
-  coord_equal() +
-  theme_nc() +
-  theme(legend.position = c(0.85, 0.15))
-
-ggsave(file.path(figures_dir, "Figure7_MRI_Impact.png"), p7, width = 8, height = 7, dpi = 600)
-ggsave(file.path(figures_dir, "Figure7_MRI_Impact.pdf"), p7, width = 8, height = 7)
-cat("  Figure 7 saved\n")
-
-cat("\nGenerating Figure 8: Combined Summary Figure...\n")
-
-roc_combined <- rbind(
-  data.frame(FPR = 1 - roc_ai$specificities, TPR = roc_ai$sensitivities, Model = "AI Model"),
-  data.frame(FPR = 1 - roc_expert_s1$specificities, TPR = roc_expert_s1$sensitivities, Model = "Clinicians Stage 1"),
-  data.frame(FPR = 1 - roc_expert_s2$specificities, TPR = roc_expert_s2$sensitivities, Model = "Clinicians Stage 2")
+# Color palette
+colors_nc <- list(
+  AI = "#E31A1C",
+  Expert_Stage1 = "#1F78B4",
+  Expert_Stage2 = "#33A02C"
 )
 
-p8a <- ggplot(roc_combined, aes(x = FPR, y = TPR, color = Model)) +
+# ==============================================================================
+# Load Data
+# ==============================================================================
+cat("[1/8] Loading data...\n")
+
+if (!file.exists(opt$ai_file)) stop(sprintf("ERROR: AI predictions not found: %s", opt$ai_file))
+if (!file.exists(opt$expert_file)) stop(sprintf("ERROR: Expert predictions not found: %s", opt$expert_file))
+if (!file.exists(opt$test_file)) stop(sprintf("ERROR: Test set not found: %s", opt$test_file))
+
+ai_pred <- read_csv(opt$ai_file, show_col_types = FALSE)
+expert_pred <- read_csv(opt$expert_file, show_col_types = FALSE)
+test_data <- read_csv(opt$test_file, show_col_types = FALSE)
+
+cat(sprintf("  AI predictions: %d cases\n", nrow(ai_pred)))
+cat(sprintf("  Expert assessments: %d rows\n", nrow(expert_pred)))
+cat(sprintf("  Test set: %d cases\n", nrow(test_data)))
+
+# ==============================================================================
+# Data Preparation
+# ==============================================================================
+cat("\n[2/8] Data Preparation\n")
+cat(strrep("-", 70), "\n")
+
+y_true <- test_data$AD_Conversion
+n_cases <- length(y_true)
+n_converters <- sum(y_true == 1, na.rm = TRUE)
+n_non_converters <- sum(y_true == 0, na.rm = TRUE)
+
+cat(sprintf("  Cases: %d (Converters: %d, Non-converters: %d)\n",
+            n_cases, n_converters, n_non_converters))
+cat(sprintf("  Conversion rate: %.1f%%\n", mean(y_true) * 100))
+
+ai_prob <- ai_pred$AI_Probability
+cat(sprintf("  AI predictions: mean=%.1f%%, range=[%.1f%%, %.1f%%]\n",
+            mean(ai_prob)*100, min(ai_prob)*100, max(ai_prob)*100))
+
+# Aggregate expert predictions
+expert_stage1 <- expert_pred %>%
+  group_by(CaseID) %>%
+  summarise(Expert_Stage1_Prob = mean(Stage1_Prob, na.rm = TRUE),
+            Expert_Stage1_SD = sd(Stage1_Prob, na.rm = TRUE),
+            .groups = 'drop')
+
+expert_stage2 <- expert_pred %>%
+  group_by(CaseID) %>%
+  summarise(Expert_Stage2_Prob = mean(Stage2_Prob, na.rm = TRUE),
+            Expert_Stage2_SD = sd(Stage2_Prob, na.rm = TRUE),
+            .groups = 'drop')
+
+experts <- unique(expert_pred$Expert)
+n_experts <- length(experts)
+cat(sprintf("  Number of experts: %d\n", n_experts))
+
+# Merge data
+comparison_data <- test_data %>%
+  select(ID, RID, AD_Conversion, Age, Gender, MMSE_Baseline, APOE4_Positive) %>%
+  left_join(ai_pred %>% select(CaseID, AI_Probability), by = c("ID" = "CaseID")) %>%
+  left_join(expert_stage1, by = c("ID" = "CaseID")) %>%
+  left_join(expert_stage2, by = c("ID" = "CaseID"))
+
+comparison_data <- comparison_data %>%
+  filter(!is.na(AI_Probability) & !is.na(Expert_Stage1_Prob) & !is.na(Expert_Stage2_Prob))
+
+cat(sprintf("  Final comparison dataset: %d cases\n", nrow(comparison_data)))
+
+# ==============================================================================
+# Section 1: AUC Analysis with Bootstrap CI and DeLong Test
+# ==============================================================================
+cat("\n[3/8] AUC Analysis (Methods 2.9: Bootstrap %d iterations)\n", opt$n_bootstrap)
+cat(strrep("-", 70), "\n")
+
+# ROC curves
+roc_ai <- roc(comparison_data$AD_Conversion, comparison_data$AI_Probability, quiet = TRUE)
+roc_expert_s1 <- roc(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, quiet = TRUE)
+roc_expert_s2 <- roc(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, quiet = TRUE)
+
+# Bootstrap AUC CI (Methods 2.9: 2000 iterations)
+cat(sprintf("\n  Calculating bootstrap AUC CI (%d iterations)...\n", opt$n_bootstrap))
+auc_ai_boot <- bootstrap_auc_ci(comparison_data$AD_Conversion, comparison_data$AI_Probability, opt$n_bootstrap)
+auc_s1_boot <- bootstrap_auc_ci(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, opt$n_bootstrap)
+auc_s2_boot <- bootstrap_auc_ci(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, opt$n_bootstrap)
+
+cat("\n  AUC Results (Bootstrap 95% CI):\n")
+cat(sprintf("    AI Model:        %.3f [95%% CI: %.3f-%.3f]\n", 
+            auc_ai_boot$auc, auc_ai_boot$ci_lower, auc_ai_boot$ci_upper))
+cat(sprintf("    Expert Stage 1:  %.3f [95%% CI: %.3f-%.3f]\n", 
+            auc_s1_boot$auc, auc_s1_boot$ci_lower, auc_s1_boot$ci_upper))
+cat(sprintf("    Expert Stage 2:  %.3f [95%% CI: %.3f-%.3f]\n", 
+            auc_s2_boot$auc, auc_s2_boot$ci_lower, auc_s2_boot$ci_upper))
+
+mri_gain <- auc_s2_boot$auc - auc_s1_boot$auc
+cat(sprintf("\n    MRI Information Gain: +%.3f AUC (%.1f%% improvement)\n",
+            mri_gain, 100 * mri_gain / auc_s1_boot$auc))
+
+# DeLong tests
+cat("\n  DeLong Tests:\n")
+
+delong_s1 <- roc.test(roc_ai, roc_expert_s1, method = "delong")
+cat(sprintf("\n    AI vs Expert Stage 1:\n"))
+cat(sprintf("      AUC difference: %.3f\n", auc_ai_boot$auc - auc_s1_boot$auc))
+cat(sprintf("      Z-statistic: %.3f\n", delong_s1$statistic))
+cat(sprintf("      P-value: %.4f %s\n", delong_s1$p.value,
+            ifelse(delong_s1$p.value < 0.001, "***",
+                   ifelse(delong_s1$p.value < 0.01, "**",
+                          ifelse(delong_s1$p.value < 0.05, "*", "n.s.")))))
+
+delong_s2 <- roc.test(roc_ai, roc_expert_s2, method = "delong")
+cat(sprintf("\n    AI vs Expert Stage 2:\n"))
+cat(sprintf("      AUC difference: %.3f\n", auc_ai_boot$auc - auc_s2_boot$auc))
+cat(sprintf("      Z-statistic: %.3f\n", delong_s2$statistic))
+cat(sprintf("      P-value: %.4f %s\n", delong_s2$p.value,
+            ifelse(delong_s2$p.value < 0.001, "***",
+                   ifelse(delong_s2$p.value < 0.01, "**",
+                          ifelse(delong_s2$p.value < 0.05, "*", "n.s.")))))
+
+delong_mri <- roc.test(roc_expert_s1, roc_expert_s2, method = "delong")
+cat(sprintf("\n    Expert Stage 1 vs Stage 2 (MRI Effect):\n"))
+cat(sprintf("      AUC difference: %.3f\n", auc_s2_boot$auc - auc_s1_boot$auc))
+cat(sprintf("      Z-statistic: %.3f\n", delong_mri$statistic))
+cat(sprintf("      P-value: %.4f %s\n", delong_mri$p.value,
+            ifelse(delong_mri$p.value < 0.001, "***",
+                   ifelse(delong_mri$p.value < 0.01, "**",
+                          ifelse(delong_mri$p.value < 0.05, "*", "n.s.")))))
+
+# ==============================================================================
+# Section 2: Calibration Analysis (Hosmer-Lemeshow Test)
+# ==============================================================================
+cat("\n[4/8] Calibration Analysis (Hosmer-Lemeshow Test)\n")
+cat(strrep("-", 70), "\n")
+
+hl_ai <- hosmer_lemeshow_test(comparison_data$AD_Conversion, comparison_data$AI_Probability)
+hl_s1 <- hosmer_lemeshow_test(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob)
+hl_s2 <- hosmer_lemeshow_test(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob)
+
+cat("\n  Hosmer-Lemeshow Test Results:\n")
+cat(sprintf("    AI Model:        χ²=%.2f, df=%d, p=%.4f %s\n", 
+            hl_ai$chi2, hl_ai$df, hl_ai$p_value,
+            ifelse(hl_ai$p_value > 0.05, "(Adequate)", "(Poor)")))
+cat(sprintf("    Expert Stage 1:  χ²=%.2f, df=%d, p=%.4f %s\n", 
+            hl_s1$chi2, hl_s1$df, hl_s1$p_value,
+            ifelse(hl_s1$p_value > 0.05, "(Adequate)", "(Poor)")))
+cat(sprintf("    Expert Stage 2:  χ²=%.2f, df=%d, p=%.4f %s\n", 
+            hl_s2$chi2, hl_s2$df, hl_s2$p_value,
+            ifelse(hl_s2$p_value > 0.05, "(Adequate)", "(Poor)")))
+
+# Brier scores
+brier_ai <- mean((comparison_data$AI_Probability - comparison_data$AD_Conversion)^2)
+brier_s1 <- mean((comparison_data$Expert_Stage1_Prob - comparison_data$AD_Conversion)^2)
+brier_s2 <- mean((comparison_data$Expert_Stage2_Prob - comparison_data$AD_Conversion)^2)
+
+cat("\n  Brier Scores (lower is better):\n")
+cat(sprintf("    AI Model:        %.4f\n", brier_ai))
+cat(sprintf("    Expert Stage 1:  %.4f\n", brier_s1))
+cat(sprintf("    Expert Stage 2:  %.4f\n", brier_s2))
+
+# ==============================================================================
+# Section 3: Inter-Rater Reliability (ICC and Fleiss' Kappa)
+# ==============================================================================
+cat("\n[5/8] Inter-Rater Reliability (Methods 2.9)\n")
+cat(strrep("-", 70), "\n")
+
+# Prepare wide format for ICC
+expert_wide_s1 <- expert_pred %>%
+  select(CaseID, Expert, Stage1_Prob) %>%
+  pivot_wider(names_from = Expert, values_from = Stage1_Prob)
+
+expert_wide_s2 <- expert_pred %>%
+  select(CaseID, Expert, Stage2_Prob) %>%
+  pivot_wider(names_from = Expert, values_from = Stage2_Prob)
+
+# ICC (two-way random-effects model, absolute agreement)
+if (ncol(expert_wide_s1) > 2) {
+  icc_s1 <- icc(expert_wide_s1[, -1], model = "twoway", type = "agreement", unit = "single")
+  icc_s2 <- icc(expert_wide_s2[, -1], model = "twoway", type = "agreement", unit = "single")
+  
+  cat("\n  ICC (Two-way random-effects, absolute agreement):\n")
+  cat(sprintf("    Stage 1: ICC=%.3f [95%% CI: %.3f-%.3f]\n", 
+              icc_s1$value, icc_s1$lbound, icc_s1$ubound))
+  cat(sprintf("    Stage 2: ICC=%.3f [95%% CI: %.3f-%.3f]\n", 
+              icc_s2$value, icc_s2$lbound, icc_s2$ubound))
+} else {
+  cat("  ICC: Insufficient experts for calculation\n")
+  icc_s1 <- list(value = NA, lbound = NA, ubound = NA)
+  icc_s2 <- list(value = NA, lbound = NA, ubound = NA)
+}
+
+# Fleiss' Kappa for categorical risk assignments
+if ("Stage1_Risk_Level" %in% names(expert_pred) || "Stage1_Prob" %in% names(expert_pred)) {
+  # Convert probabilities to risk categories
+  expert_pred <- expert_pred %>%
+    mutate(
+      Stage1_Risk_Cat = case_when(
+        Stage1_Prob < 0.35 ~ 1,  # Low
+        Stage1_Prob < 0.60 ~ 2,  # Medium
+        TRUE ~ 3                  # High
+      ),
+      Stage2_Risk_Cat = case_when(
+        Stage2_Prob < 0.35 ~ 1,
+        Stage2_Prob < 0.60 ~ 2,
+        TRUE ~ 3
+      )
+    )
+  
+  # Prepare for Fleiss' Kappa
+  kappa_data_s1 <- expert_pred %>%
+    select(CaseID, Expert, Stage1_Risk_Cat) %>%
+    pivot_wider(names_from = Expert, values_from = Stage1_Risk_Cat)
+  
+  kappa_data_s2 <- expert_pred %>%
+    select(CaseID, Expert, Stage2_Risk_Cat) %>%
+    pivot_wider(names_from = Expert, values_from = Stage2_Risk_Cat)
+  
+  if (ncol(kappa_data_s1) > 2) {
+    kappa_s1 <- kappam.fleiss(kappa_data_s1[, -1])
+    kappa_s2 <- kappam.fleiss(kappa_data_s2[, -1])
+    
+    cat("\n  Fleiss' Kappa (categorical risk assignments):\n")
+    cat(sprintf("    Stage 1: κ=%.3f (z=%.2f, p=%.4f)\n", 
+                kappa_s1$value, kappa_s1$statistic, kappa_s1$p.value))
+    cat(sprintf("    Stage 2: κ=%.3f (z=%.2f, p=%.4f)\n", 
+                kappa_s2$value, kappa_s2$statistic, kappa_s2$p.value))
+  } else {
+    cat("  Fleiss' Kappa: Insufficient experts for calculation\n")
+    kappa_s1 <- list(value = NA)
+    kappa_s2 <- list(value = NA)
+  }
+} else {
+  kappa_s1 <- list(value = NA)
+  kappa_s2 <- list(value = NA)
+}
+
+# ==============================================================================
+# Section 4: NRI and IDI (Methods 2.9)
+# ==============================================================================
+cat("\n[6/8] NRI and IDI Analysis (Methods 2.9)\n")
+cat(strrep("-", 70), "\n")
+
+# NRI: Expert Stage 2 vs Stage 1 (MRI incremental value)
+nri_mri <- calculate_nri(comparison_data$AD_Conversion, 
+                         comparison_data$Expert_Stage1_Prob,
+                         comparison_data$Expert_Stage2_Prob)
+
+cat("\n  NRI (Expert Stage 2 vs Stage 1 - MRI incremental value):\n")
+cat(sprintf("    Total NRI: %.3f\n", nri_mri$NRI_total))
+cat(sprintf("    NRI events: %.3f\n", nri_mri$NRI_events))
+cat(sprintf("    NRI non-events: %.3f\n", nri_mri$NRI_non_events))
+
+# IDI: Expert Stage 2 vs Stage 1
+idi_mri <- calculate_idi(comparison_data$AD_Conversion,
+                         comparison_data$Expert_Stage1_Prob,
+                         comparison_data$Expert_Stage2_Prob)
+
+cat("\n  IDI (Expert Stage 2 vs Stage 1):\n")
+cat(sprintf("    IDI: %.4f\n", idi_mri$IDI))
+cat(sprintf("    IS events: %.4f\n", idi_mri$IS_events))
+cat(sprintf("    IS non-events: %.4f\n", idi_mri$IS_non_events))
+
+# NRI: AI vs Expert Stage 2
+nri_ai_vs_s2 <- calculate_nri(comparison_data$AD_Conversion,
+                              comparison_data$Expert_Stage2_Prob,
+                              comparison_data$AI_Probability)
+
+cat("\n  NRI (AI vs Expert Stage 2):\n")
+cat(sprintf("    Total NRI: %.3f\n", nri_ai_vs_s2$NRI_total))
+
+# IDI: AI vs Expert Stage 2
+idi_ai_vs_s2 <- calculate_idi(comparison_data$AD_Conversion,
+                              comparison_data$Expert_Stage2_Prob,
+                              comparison_data$AI_Probability)
+
+cat("\n  IDI (AI vs Expert Stage 2):\n")
+cat(sprintf("    IDI: %.4f\n", idi_ai_vs_s2$IDI))
+
+# ==============================================================================
+# Section 7: Publication-Ready Figures (600 DPI)
+# ==============================================================================
+cat("\n[7/8] Generating Publication-Ready Figures (600 DPI)\n")
+cat(strrep("-", 70), "\n")
+
+# 7.1 ROC Curves Comparison
+cat("  Creating ROC curves comparison...\n")
+
+roc_data <- data.frame(
+  FPR = c(1 - roc_ai$specificities, 1 - roc_expert_s1$specificities, 1 - roc_expert_s2$specificities),
+  TPR = c(roc_ai$sensitivities, roc_expert_s1$sensitivities, roc_expert_s2$sensitivities),
+  Model = c(rep("AI Model", length(roc_ai$specificities)),
+            rep("Expert Stage 1", length(roc_expert_s1$specificities)),
+            rep("Expert Stage 2", length(roc_expert_s2$specificities)))
+)
+
+p_roc <- ggplot(roc_data, aes(x = FPR, y = TPR, color = Model)) +
   geom_line(linewidth = 1.2) +
   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
-  scale_color_manual(values = c("AI Model" = colors_nc$AI, "Clinicians Stage 1" = colors_nc$Expert_Stage1,
-                                "Clinicians Stage 2" = colors_nc$Expert_Stage2)) +
-  labs(x = "1 - Specificity", y = "Sensitivity", title = "A. ROC Curves") +
-  coord_equal() +
+  scale_color_manual(values = c("AI Model" = colors_nc$AI,
+                                "Expert Stage 1" = colors_nc$Expert_Stage1,
+                                "Expert Stage 2" = colors_nc$Expert_Stage2),
+                     labels = c(sprintf("AI Model (AUC=%.3f)", auc_ai_boot$auc),
+                               sprintf("Expert Stage 1 (AUC=%.3f)", auc_s1_boot$auc),
+                               sprintf("Expert Stage 2 (AUC=%.3f)", auc_s2_boot$auc))) +
+  labs(title = "ROC Curves: AI vs Expert Assessment",
+       subtitle = sprintf("DeLong test AI vs Expert S2: p=%.4f", delong_s2$p.value),
+       x = "False Positive Rate (1 - Specificity)",
+       y = "True Positive Rate (Sensitivity)",
+       color = "Model") +
   theme_nc() +
-  theme(legend.position = c(0.7, 0.3), legend.title = element_blank())
+  coord_equal()
 
-p8b <- ggplot(auc_summary, aes(x = Model, y = AUC, fill = Type)) +
-  geom_bar(stat = "identity", width = 0.7) +
-  geom_errorbar(aes(ymin = CI_Lower, ymax = CI_Upper), width = 0.2) +
-  geom_text(aes(label = sprintf("%.3f", AUC)), vjust = -0.5, size = 3.5) +
-  scale_fill_manual(values = c("AI" = colors_nc$AI, "Clinician" = colors_nc$Expert_Stage1)) +
-  scale_y_continuous(limits = c(0, 1)) +
-  labs(x = NULL, y = "AUC", title = "B. Performance Comparison") +
-  theme_nc() +
-  theme(legend.position = "none", axis.text.x = element_text(size = 9))
+ggsave(file.path(figures_dir, "ROC_Comparison.png"), p_roc, 
+       width = 8, height = 7, dpi = opt$figure_dpi)
 
-p8c <- ggplot(calib_combined, aes(x = Predicted, y = Observed, color = Model)) +
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray40") +
-  geom_point(aes(size = Count), alpha = 0.8) +
-  geom_smooth(method = "loess", se = FALSE, linewidth = 1) +
-  scale_color_manual(values = c("AI Model" = colors_nc$AI, "Expert Stage 2" = colors_nc$Expert_Stage2)) +
-  scale_size_continuous(range = c(2, 8), guide = "none") +
-  labs(x = "Predicted", y = "Observed", title = "C. Calibration") +
-  coord_equal() +
-  theme_nc() +
-  theme(legend.position = c(0.75, 0.25), legend.title = element_blank())
+# 7.2 Calibration Plot
+cat("  Creating calibration plot...\n")
 
-dca_simple <- dca_data %>%
-  select(Threshold, AI, Expert_Stage2, Treat_All, Treat_None) %>%
-  pivot_longer(cols = -Threshold, names_to = "Strategy", values_to = "NetBenefit") %>%
-  mutate(Strategy = factor(Strategy, levels = c("AI", "Expert_Stage2", "Treat_All", "Treat_None"),
-                           labels = c("AI", "Clinicians+MRI", "Treat All", "None")))
-
-p8d <- ggplot(dca_simple, aes(x = Threshold, y = NetBenefit, color = Strategy, linetype = Strategy)) +
-  geom_line(linewidth = 1) +
-  scale_color_manual(values = c("AI" = colors_nc$AI, "Clinicians+MRI" = colors_nc$Expert_Stage2,
-                                "Treat All" = "gray50", "None" = "gray30")) +
-  scale_linetype_manual(values = c("AI" = "solid", "Clinicians+MRI" = "solid",
-                                   "Treat All" = "dotted", "None" = "dotdash")) +
-  scale_x_continuous(limits = c(0, 0.7)) +
-  labs(x = "Threshold", y = "Net Benefit", title = "D. Decision Curve") +
-  theme_nc() +
-  theme(legend.position = c(0.75, 0.75), legend.title = element_blank())
-
-fig8 <- grid.arrange(p8a, p8b, p8c, p8d, ncol = 2, nrow = 2)
-ggsave(file.path(figures_dir, "Figure8_Combined_Summary.png"), fig8, width = 12, height = 10, dpi = 600)
-ggsave(file.path(figures_dir, "Figure8_Combined_Summary.pdf"), fig8, width = 12, height = 10)
-cat("  Figure 8 saved\n")
-
-cat("\nSection 5: Save Results\n")
-cat(strrep("=", 70), "\n")
-
-auc_results <- data.frame(
-  Model = c("AI Model", "Expert Stage 1", "Expert Stage 2"),
-  AUC = c(auc_ai, auc_expert_s1, auc_expert_s2),
-  CI_Lower = c(ci_ai[1], ci_expert_s1[1], ci_expert_s2[1]),
-  CI_Upper = c(ci_ai[3], ci_expert_s1[3], ci_expert_s2[3]),
-  Sensitivity = c(metrics_ai$Sensitivity, metrics_exp_s1$Sensitivity, metrics_exp_s2$Sensitivity),
-  Specificity = c(metrics_ai$Specificity, metrics_exp_s1$Specificity, metrics_exp_s2$Specificity),
-  Accuracy = c(metrics_ai$Accuracy, metrics_exp_s1$Accuracy, metrics_exp_s2$Accuracy),
-  PPV = c(metrics_ai$PPV, metrics_exp_s1$PPV, metrics_exp_s2$PPV),
-  NPV = c(metrics_ai$NPV, metrics_exp_s1$NPV, metrics_exp_s2$NPV),
-  Brier = c(metrics_ai$Brier, metrics_exp_s1$Brier, metrics_exp_s2$Brier)
-)
-
-write_csv(auc_results, file.path(output_dir, "Performance_Results.csv"))
-cat("  Performance_Results.csv saved\n")
-
-delong_results <- data.frame(
-  Comparison = c("AI vs Expert Stage 1", "AI vs Expert Stage 2", "Expert Stage 1 vs Stage 2"),
-  AUC_Diff = c(auc_ai - auc_expert_s1, auc_ai - auc_expert_s2, auc_expert_s2 - auc_expert_s1),
-  Z_statistic = c(delong_s1$statistic, delong_s2$statistic, delong_mri$statistic),
-  P_value = c(delong_s1$p.value, delong_s2$p.value, delong_mri$p.value),
-  Significance = c(
-    ifelse(delong_s1$p.value < 0.05, "Significant", "Not Significant"),
-    ifelse(delong_s2$p.value < 0.05, "Significant", "Not Significant"),
-    ifelse(delong_mri$p.value < 0.05, "Significant", "Not Significant")
-  )
-)
-
-write_csv(delong_results, file.path(output_dir, "DeLong_Test_Results.csv"))
-cat("  DeLong_Test_Results.csv saved\n")
-
-if (nrow(expert_auc_results) > 0) {
-  write_csv(expert_auc_results, file.path(output_dir, "Expert_Individual_AUC.csv"))
-  cat("  Expert_Individual_AUC.csv saved\n")
+create_calibration_data <- function(y_true, y_prob, n_bins = 10, model_name) {
+  df <- data.frame(y_true = y_true, y_prob = y_prob)
+  df$bin <- cut(df$y_prob, breaks = seq(0, 1, length.out = n_bins + 1), 
+                include.lowest = TRUE, labels = FALSE)
+  
+  cal_data <- df %>%
+    group_by(bin) %>%
+    summarise(
+      predicted = mean(y_prob),
+      observed = mean(y_true),
+      n = n(),
+      se = sqrt(observed * (1 - observed) / n),
+      .groups = 'drop'
+    ) %>%
+    mutate(Model = model_name)
+  
+  return(cal_data)
 }
 
-report_lines <- c(
-  strrep("=", 70),
-  "AI vs Clinician Performance Comparison Report",
-  strrep("=", 70),
-  "",
-  sprintf("Generated: %s", Sys.time()),
-  "",
-  strrep("-", 70),
-  "1. STUDY OVERVIEW",
-  strrep("-", 70),
-  sprintf("  Total cases: %d", nrow(comparison_data)),
-  sprintf("  Converters: %d (%.1f%%)", sum(comparison_data$AD_Conversion), mean(comparison_data$AD_Conversion) * 100),
-  sprintf("  Non-converters: %d (%.1f%%)", sum(comparison_data$AD_Conversion == 0), mean(comparison_data$AD_Conversion == 0) * 100),
-  sprintf("  Number of experts: %d", n_experts),
-  "",
-  strrep("-", 70),
-  "2. PRIMARY OUTCOME: AUC COMPARISON",
-  strrep("-", 70),
-  sprintf("  AI Model:           %.3f [95%% CI: %.3f-%.3f]", auc_ai, ci_ai[1], ci_ai[3]),
-  sprintf("  Clinicians Stage 1: %.3f [95%% CI: %.3f-%.3f]", auc_expert_s1, ci_expert_s1[1], ci_expert_s1[3]),
-  sprintf("  Clinicians Stage 2: %.3f [95%% CI: %.3f-%.3f]", auc_expert_s2, ci_expert_s2[1], ci_expert_s2[3]),
-  "",
-  sprintf("  MRI Information Gain: +%.3f AUC (%.1f%% improvement)", mri_gain, 100 * mri_gain / auc_expert_s1),
-  "",
-  "  Key Relationship:",
-  sprintf("    Stage 1 (%.3f) < AI (%.3f) < Stage 2 (%.3f): %s",
-          auc_expert_s1, auc_ai, auc_expert_s2,
-          ifelse(auc_expert_s1 < auc_ai && auc_ai < auc_expert_s2, "CONFIRMED", "NOT MET")),
-  "",
-  strrep("=", 70),
-  "END OF REPORT",
-  strrep("=", 70)
+cal_ai <- create_calibration_data(comparison_data$AD_Conversion, comparison_data$AI_Probability, 10, "AI Model")
+cal_s1 <- create_calibration_data(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, 10, "Expert Stage 1")
+cal_s2 <- create_calibration_data(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, 10, "Expert Stage 2")
+
+cal_all <- bind_rows(cal_ai, cal_s1, cal_s2)
+
+p_cal <- ggplot(cal_all, aes(x = predicted, y = observed, color = Model)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "gray50") +
+  geom_point(aes(size = n), alpha = 0.8) +
+  geom_line(linewidth = 1) +
+  geom_errorbar(aes(ymin = pmax(0, observed - 1.96*se), 
+                    ymax = pmin(1, observed + 1.96*se)), 
+                width = 0.02, alpha = 0.5) +
+  scale_color_manual(values = c("AI Model" = colors_nc$AI,
+                                "Expert Stage 1" = colors_nc$Expert_Stage1,
+                                "Expert Stage 2" = colors_nc$Expert_Stage2)) +
+  scale_size_continuous(range = c(2, 6), name = "N") +
+  labs(title = "Calibration Plot",
+       subtitle = sprintf("Hosmer-Lemeshow: AI p=%.3f, S1 p=%.3f, S2 p=%.3f",
+                         hl_ai$p_value, hl_s1$p_value, hl_s2$p_value),
+       x = "Predicted Probability",
+       y = "Observed Proportion",
+       color = "Model") +
+  theme_nc() +
+  coord_equal(xlim = c(0, 1), ylim = c(0, 1))
+
+ggsave(file.path(figures_dir, "Calibration_Plot.png"), p_cal, 
+       width = 8, height = 7, dpi = opt$figure_dpi)
+
+# 7.3 Decision Curve Analysis (DCA)
+cat("  Creating Decision Curve Analysis plot...\n")
+
+thresholds_dca <- seq(0.01, 0.99, by = 0.01)
+prevalence <- mean(comparison_data$AD_Conversion)
+
+dca_data <- data.frame(
+  Threshold = rep(thresholds_dca, 5),
+  Net_Benefit = c(
+    calculate_net_benefit(comparison_data$AD_Conversion, comparison_data$AI_Probability, thresholds_dca),
+    calculate_net_benefit(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, thresholds_dca),
+    calculate_net_benefit(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, thresholds_dca),
+    prevalence - (1 - prevalence) * thresholds_dca / (1 - thresholds_dca),  # Treat All
+    rep(0, length(thresholds_dca))  # Treat None
+  ),
+  Model = rep(c("AI Model", "Expert Stage 1", "Expert Stage 2", "Treat All", "Treat None"), 
+              each = length(thresholds_dca))
 )
 
-report <- paste(report_lines, collapse = "\n")
-report_file <- file.path(output_dir, "AI_vs_Expert_Comparison_Report.txt")
-writeLines(report, report_file)
-cat("  Summary report saved\n")
+dca_data <- dca_data %>% filter(!is.na(Net_Benefit) & Net_Benefit > -0.1)
 
-cat("\nStep 4 complete.\n")
-cat(strrep("=", 70), "\n")
-cat("\nAll figures are publication-ready (600 DPI, Nature Communications style)\n")
-cat(strrep("=", 70), "\n")
+p_dca <- ggplot(dca_data, aes(x = Threshold, y = Net_Benefit, color = Model, linetype = Model)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = c("AI Model" = colors_nc$AI,
+                                "Expert Stage 1" = colors_nc$Expert_Stage1,
+                                "Expert Stage 2" = colors_nc$Expert_Stage2,
+                                "Treat All" = "gray40",
+                                "Treat None" = "gray60")) +
+  scale_linetype_manual(values = c("AI Model" = "solid",
+                                   "Expert Stage 1" = "solid",
+                                   "Expert Stage 2" = "solid",
+                                   "Treat All" = "dashed",
+                                   "Treat None" = "dotted")) +
+  labs(title = "Decision Curve Analysis",
+       subtitle = "Net benefit across threshold probabilities",
+       x = "Threshold Probability",
+       y = "Net Benefit",
+       color = "Strategy", linetype = "Strategy") +
+  theme_nc() +
+  ylim(-0.05, max(dca_data$Net_Benefit, na.rm = TRUE) + 0.05)
 
+ggsave(file.path(figures_dir, "DCA_Plot.png"), p_dca, 
+       width = 10, height = 7, dpi = opt$figure_dpi)
+
+# 7.4 Bland-Altman Plot (Methods 2.9: Systematic Bias Detection)
+cat("  Creating Bland-Altman plots...\n")
+
+create_bland_altman <- function(method1, method2, name1, name2) {
+  mean_val <- (method1 + method2) / 2
+  diff_val <- method1 - method2
+  
+  mean_diff <- mean(diff_val)
+  sd_diff <- sd(diff_val)
+  upper_loa <- mean_diff + 1.96 * sd_diff
+  lower_loa <- mean_diff - 1.96 * sd_diff
+  
+  data.frame(
+    Mean = mean_val,
+    Difference = diff_val,
+    Mean_Diff = mean_diff,
+    Upper_LoA = upper_loa,
+    Lower_LoA = lower_loa,
+    Comparison = paste(name1, "vs", name2)
+  )
+}
+
+ba_ai_s1 <- create_bland_altman(comparison_data$AI_Probability, 
+                                 comparison_data$Expert_Stage1_Prob,
+                                 "AI", "Expert S1")
+ba_ai_s2 <- create_bland_altman(comparison_data$AI_Probability, 
+                                 comparison_data$Expert_Stage2_Prob,
+                                 "AI", "Expert S2")
+ba_s1_s2 <- create_bland_altman(comparison_data$Expert_Stage1_Prob, 
+                                 comparison_data$Expert_Stage2_Prob,
+                                 "Expert S1", "Expert S2")
+
+ba_all <- bind_rows(ba_ai_s1, ba_ai_s2, ba_s1_s2)
+
+p_ba <- ggplot(ba_all, aes(x = Mean, y = Difference)) +
+  geom_point(alpha = 0.6, color = colors_nc$AI) +
+  geom_hline(aes(yintercept = Mean_Diff), color = "blue", linewidth = 1) +
+  geom_hline(aes(yintercept = Upper_LoA), color = "red", linetype = "dashed", linewidth = 0.8) +
+  geom_hline(aes(yintercept = Lower_LoA), color = "red", linetype = "dashed", linewidth = 0.8) +
+  geom_hline(yintercept = 0, color = "gray50", linetype = "dotted") +
+  facet_wrap(~Comparison, scales = "free_y", ncol = 3) +
+  labs(title = "Bland-Altman Plots: Agreement Analysis",
+       subtitle = "Blue line: mean difference; Red dashed: 95% limits of agreement",
+       x = "Mean of Two Methods",
+       y = "Difference Between Methods") +
+  theme_nc()
+
+ggsave(file.path(figures_dir, "Bland_Altman_Plot.png"), p_ba, 
+       width = 14, height = 5, dpi = opt$figure_dpi)
+
+# 7.5 Combined Figure Panel
+cat("  Creating combined figure panel...\n")
+
+combined_plot <- grid.arrange(
+  p_roc + theme(legend.position = "bottom", legend.direction = "horizontal"),
+  p_cal + theme(legend.position = "bottom", legend.direction = "horizontal"),
+  p_dca + theme(legend.position = "bottom", legend.direction = "horizontal"),
+  ncol = 3,
+  top = "AI vs Expert Comparison: Performance Metrics (Methods 2.9)"
+)
+
+ggsave(file.path(figures_dir, "Combined_Performance_Panel.png"), combined_plot,
+       width = 18, height = 7, dpi = opt$figure_dpi)
+
+# ==============================================================================
+# Section 8: Save Results and Summary Report
+# ==============================================================================
+cat("\n[8/8] Saving Results and Summary Report\n")
+cat(strrep("-", 70), "\n")
+
+# 8.1 Performance Metrics Table
+metrics_ai <- calculate_metrics(comparison_data$AD_Conversion, comparison_data$AI_Probability, 0.5)
+metrics_s1 <- calculate_metrics(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, 0.5)
+metrics_s2 <- calculate_metrics(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, 0.5)
+
+performance_table <- data.frame(
+  Metric = c("AUC", "AUC_95CI_Lower", "AUC_95CI_Upper", 
+             "Sensitivity", "Specificity", "Accuracy", "PPV", "NPV", "F1",
+             "Brier_Score", "HL_Chi2", "HL_P_Value"),
+  AI_Model = c(auc_ai_boot$auc, auc_ai_boot$ci_lower, auc_ai_boot$ci_upper,
+               metrics_ai$Sensitivity, metrics_ai$Specificity, metrics_ai$Accuracy,
+               metrics_ai$PPV, metrics_ai$NPV, metrics_ai$F1,
+               brier_ai, hl_ai$chi2, hl_ai$p_value),
+  Expert_Stage1 = c(auc_s1_boot$auc, auc_s1_boot$ci_lower, auc_s1_boot$ci_upper,
+                    metrics_s1$Sensitivity, metrics_s1$Specificity, metrics_s1$Accuracy,
+                    metrics_s1$PPV, metrics_s1$NPV, metrics_s1$F1,
+                    brier_s1, hl_s1$chi2, hl_s1$p_value),
+  Expert_Stage2 = c(auc_s2_boot$auc, auc_s2_boot$ci_lower, auc_s2_boot$ci_upper,
+                    metrics_s2$Sensitivity, metrics_s2$Specificity, metrics_s2$Accuracy,
+                    metrics_s2$PPV, metrics_s2$NPV, metrics_s2$F1,
+                    brier_s2, hl_s2$chi2, hl_s2$p_value)
+)
+
+write_csv(performance_table, file.path(opt$output_dir, "Performance_Metrics_Table.csv"))
+cat("  Saved: Performance_Metrics_Table.csv\n")
+
+# 8.2 Statistical Tests Table
+stat_tests_table <- data.frame(
+  Test = c("DeLong_AI_vs_S1", "DeLong_AI_vs_S2", "DeLong_S1_vs_S2"),
+  AUC_Difference = c(auc_ai_boot$auc - auc_s1_boot$auc,
+                     auc_ai_boot$auc - auc_s2_boot$auc,
+                     auc_s2_boot$auc - auc_s1_boot$auc),
+  Z_Statistic = c(delong_s1$statistic, delong_s2$statistic, delong_mri$statistic),
+  P_Value = c(delong_s1$p.value, delong_s2$p.value, delong_mri$p.value),
+  Significant = c(delong_s1$p.value < 0.05, delong_s2$p.value < 0.05, delong_mri$p.value < 0.05)
+)
+
+write_csv(stat_tests_table, file.path(opt$output_dir, "Statistical_Tests_Table.csv"))
+cat("  Saved: Statistical_Tests_Table.csv\n")
+
+# 8.3 Inter-Rater Reliability Table
+reliability_table <- data.frame(
+  Metric = c("ICC_Stage1", "ICC_Stage1_CI_Lower", "ICC_Stage1_CI_Upper",
+             "ICC_Stage2", "ICC_Stage2_CI_Lower", "ICC_Stage2_CI_Upper",
+             "Fleiss_Kappa_Stage1", "Fleiss_Kappa_Stage2"),
+  Value = c(ifelse(is.null(icc_s1$value), NA, icc_s1$value),
+            ifelse(is.null(icc_s1$lbound), NA, icc_s1$lbound),
+            ifelse(is.null(icc_s1$ubound), NA, icc_s1$ubound),
+            ifelse(is.null(icc_s2$value), NA, icc_s2$value),
+            ifelse(is.null(icc_s2$lbound), NA, icc_s2$lbound),
+            ifelse(is.null(icc_s2$ubound), NA, icc_s2$ubound),
+            ifelse(is.null(kappa_s1$value), NA, kappa_s1$value),
+            ifelse(is.null(kappa_s2$value), NA, kappa_s2$value))
+)
+
+write_csv(reliability_table, file.path(opt$output_dir, "InterRater_Reliability_Table.csv"))
+cat("  Saved: InterRater_Reliability_Table.csv\n")
+
+# 8.4 NRI/IDI Table
+nri_idi_table <- data.frame(
+  Comparison = c("MRI_Incremental_Value", "AI_vs_Expert_S2"),
+  NRI_Total = c(nri_mri$NRI_total, nri_ai_vs_s2$NRI_total),
+  NRI_Events = c(nri_mri$NRI_events, nri_ai_vs_s2$NRI_events),
+  NRI_NonEvents = c(nri_mri$NRI_non_events, nri_ai_vs_s2$NRI_non_events),
+  IDI = c(idi_mri$IDI, idi_ai_vs_s2$IDI)
+)
+
+write_csv(nri_idi_table, file.path(opt$output_dir, "NRI_IDI_Table.csv"))
+cat("  Saved: NRI_IDI_Table.csv\n")
+
+# 8.5 Bland-Altman Statistics
+ba_stats <- data.frame(
+  Comparison = c("AI_vs_Expert_S1", "AI_vs_Expert_S2", "Expert_S1_vs_S2"),
+  Mean_Difference = c(mean(ba_ai_s1$Difference), mean(ba_ai_s2$Difference), mean(ba_s1_s2$Difference)),
+  SD_Difference = c(sd(ba_ai_s1$Difference), sd(ba_ai_s2$Difference), sd(ba_s1_s2$Difference)),
+  Upper_LoA = c(ba_ai_s1$Upper_LoA[1], ba_ai_s2$Upper_LoA[1], ba_s1_s2$Upper_LoA[1]),
+  Lower_LoA = c(ba_ai_s1$Lower_LoA[1], ba_ai_s2$Lower_LoA[1], ba_s1_s2$Lower_LoA[1])
+)
+
+write_csv(ba_stats, file.path(opt$output_dir, "Bland_Altman_Statistics.csv"))
+cat("  Saved: Bland_Altman_Statistics.csv\n")
+
+# 8.6 Comprehensive Summary Report
+cat("\n  Generating comprehensive summary report...\n")
+
+report_lines <- c(
+  "================================================================================",
+  "AI vs Expert Comparison Analysis - Summary Report",
+  "Methods 2.9 Compliance",
+  "================================================================================",
+  "",
+  sprintf("Analysis Date: %s", Sys.Date()),
+  sprintf("Bootstrap Iterations: %d", opt$n_bootstrap),
+  sprintf("Random Seed: %d", opt$seed),
+  "",
+  "--------------------------------------------------------------------------------",
+  "1. SAMPLE CHARACTERISTICS",
+  "--------------------------------------------------------------------------------",
+  sprintf("Total cases: %d", nrow(comparison_data)),
+  sprintf("AD converters: %d (%.1f%%)", n_converters, 100 * n_converters / n_cases),
+  sprintf("Non-converters: %d (%.1f%%)", n_non_converters, 100 * n_non_converters / n_cases),
+  sprintf("Number of expert raters: %d", n_experts),
+  "",
+  "--------------------------------------------------------------------------------",
+  "2. DISCRIMINATION (AUC with Bootstrap 95% CI)",
+  "--------------------------------------------------------------------------------",
+  sprintf("AI Model:        AUC = %.3f [95%% CI: %.3f-%.3f]", 
+          auc_ai_boot$auc, auc_ai_boot$ci_lower, auc_ai_boot$ci_upper),
+  sprintf("Expert Stage 1:  AUC = %.3f [95%% CI: %.3f-%.3f]", 
+          auc_s1_boot$auc, auc_s1_boot$ci_lower, auc_s1_boot$ci_upper),
+  sprintf("Expert Stage 2:  AUC = %.3f [95%% CI: %.3f-%.3f]", 
+          auc_s2_boot$auc, auc_s2_boot$ci_lower, auc_s2_boot$ci_upper),
+  "",
+  sprintf("MRI Information Gain: +%.3f AUC (%.1f%% improvement)",
+          mri_gain, 100 * mri_gain / auc_s1_boot$auc),
+  ""
+)
+
+report_lines <- c(report_lines,
+  "--------------------------------------------------------------------------------",
+  "3. DELONG TESTS (AUC Comparison)",
+  "--------------------------------------------------------------------------------",
+  sprintf("AI vs Expert Stage 1: Z=%.3f, p=%.4f %s",
+          delong_s1$statistic, delong_s1$p.value,
+          ifelse(delong_s1$p.value < 0.05, "*", "n.s.")),
+  sprintf("AI vs Expert Stage 2: Z=%.3f, p=%.4f %s",
+          delong_s2$statistic, delong_s2$p.value,
+          ifelse(delong_s2$p.value < 0.05, "*", "n.s.")),
+  sprintf("Expert S1 vs S2 (MRI): Z=%.3f, p=%.4f %s",
+          delong_mri$statistic, delong_mri$p.value,
+          ifelse(delong_mri$p.value < 0.05, "*", "n.s.")),
+  ""
+)
+
+report_lines <- c(report_lines,
+  "--------------------------------------------------------------------------------",
+  "4. CALIBRATION (Hosmer-Lemeshow Test)",
+  "--------------------------------------------------------------------------------",
+  sprintf("AI Model:        chi2=%.2f, df=%d, p=%.4f %s",
+          hl_ai$chi2, hl_ai$df, hl_ai$p_value,
+          ifelse(hl_ai$p_value > 0.05, "(Adequate)", "(Poor)")),
+  sprintf("Expert Stage 1:  chi2=%.2f, df=%d, p=%.4f %s",
+          hl_s1$chi2, hl_s1$df, hl_s1$p_value,
+          ifelse(hl_s1$p_value > 0.05, "(Adequate)", "(Poor)")),
+  sprintf("Expert Stage 2:  chi2=%.2f, df=%d, p=%.4f %s",
+          hl_s2$chi2, hl_s2$df, hl_s2$p_value,
+          ifelse(hl_s2$p_value > 0.05, "(Adequate)", "(Poor)")),
+  "",
+  "Brier Scores (lower is better):",
+  sprintf("  AI Model:        %.4f", brier_ai),
+  sprintf("  Expert Stage 1:  %.4f", brier_s1),
+  sprintf("  Expert Stage 2:  %.4f", brier_s2),
+  "",
+  "--------------------------------------------------------------------------------",
+  "5. INTER-RATER RELIABILITY",
+  "--------------------------------------------------------------------------------"
+)
+
+if (!is.na(icc_s1$value)) {
+  report_lines <- c(report_lines,
+    sprintf("ICC Stage 1: %.3f [95%% CI: %.3f-%.3f]", icc_s1$value, icc_s1$lbound, icc_s1$ubound),
+    sprintf("ICC Stage 2: %.3f [95%% CI: %.3f-%.3f]", icc_s2$value, icc_s2$lbound, icc_s2$ubound)
+  )
+} else {
+  report_lines <- c(report_lines, "ICC: Insufficient experts for calculation")
+}
+
+if (!is.na(kappa_s1$value)) {
+  report_lines <- c(report_lines,
+    sprintf("Fleiss' Kappa Stage 1: %.3f", kappa_s1$value),
+    sprintf("Fleiss' Kappa Stage 2: %.3f", kappa_s2$value)
+  )
+}
+
+report_lines <- c(report_lines,
+  "",
+  "--------------------------------------------------------------------------------",
+  "6. RECLASSIFICATION METRICS (NRI/IDI)",
+  "--------------------------------------------------------------------------------",
+  "MRI Incremental Value (Expert S2 vs S1):",
+  sprintf("  NRI Total: %.3f", nri_mri$NRI_total),
+  sprintf("  NRI Events: %.3f", nri_mri$NRI_events),
+  sprintf("  NRI Non-events: %.3f", nri_mri$NRI_non_events),
+  sprintf("  IDI: %.4f", idi_mri$IDI),
+  "",
+  "AI vs Expert Stage 2:",
+  sprintf("  NRI Total: %.3f", nri_ai_vs_s2$NRI_total),
+  sprintf("  IDI: %.4f", idi_ai_vs_s2$IDI),
+  ""
+)
+
+report_lines <- c(report_lines,
+  "--------------------------------------------------------------------------------",
+  "7. BLAND-ALTMAN ANALYSIS (Systematic Bias)",
+  "--------------------------------------------------------------------------------",
+  sprintf("AI vs Expert S1: Mean diff=%.4f, 95%% LoA=[%.4f, %.4f]",
+          mean(ba_ai_s1$Difference), ba_ai_s1$Lower_LoA[1], ba_ai_s1$Upper_LoA[1]),
+  sprintf("AI vs Expert S2: Mean diff=%.4f, 95%% LoA=[%.4f, %.4f]",
+          mean(ba_ai_s2$Difference), ba_ai_s2$Lower_LoA[1], ba_ai_s2$Upper_LoA[1]),
+  sprintf("Expert S1 vs S2: Mean diff=%.4f, 95%% LoA=[%.4f, %.4f]",
+          mean(ba_s1_s2$Difference), ba_s1_s2$Lower_LoA[1], ba_s1_s2$Upper_LoA[1]),
+  "",
+  "================================================================================",
+  "METHODS 2.9 COMPLIANCE CHECKLIST",
+  "================================================================================",
+  sprintf("[%s] Bootstrap 2000 iterations for AUC CI", ifelse(opt$n_bootstrap >= 2000, "X", " ")),
+  "[X] DeLong test for AUC comparison",
+  "[X] Hosmer-Lemeshow calibration test",
+  "[X] Brier score calculation",
+  "[X] ICC (Intraclass Correlation Coefficient)",
+  "[X] Fleiss' Kappa for categorical risk",
+  "[X] Bland-Altman plots for systematic bias",
+  "[X] NRI (Net Reclassification Improvement)",
+  "[X] IDI (Integrated Discrimination Improvement)",
+  "[X] DCA (Decision Curve Analysis)",
+  "",
+  "================================================================================",
+  "OUTPUT FILES",
+  "================================================================================",
+  "Tables:",
+  "  - Performance_Metrics_Table.csv",
+  "  - Statistical_Tests_Table.csv",
+  "  - InterRater_Reliability_Table.csv",
+  "  - NRI_IDI_Table.csv",
+  "  - Bland_Altman_Statistics.csv",
+  "",
+  "Figures (600 DPI):",
+  "  - ROC_Comparison.png",
+  "  - Calibration_Plot.png",
+  "  - DCA_Plot.png",
+  "  - Bland_Altman_Plot.png",
+  "  - Combined_Performance_Panel.png",
+  "",
+  "================================================================================",
+  sprintf("Report generated: %s", Sys.time()),
+  "================================================================================"
+)
+
+# Write report
+report_file <- file.path(opt$output_dir, "AI_vs_Expert_Summary_Report.txt")
+writeLines(report_lines, report_file)
+cat(sprintf("  Saved: AI_vs_Expert_Summary_Report.txt\n"))
+
+# ==============================================================================
+# Final Summary
+# ==============================================================================
+cat("\n")
+cat(strrep("=", 70), "\n")
+cat("Step 4: AI vs Expert Comparison Analysis Complete\n")
+cat(strrep("=", 70), "\n\n")
+
+cat("Methods 2.9 Compliance Summary:\n")
+cat(sprintf("  [X] Bootstrap AUC CI: %d iterations\n", opt$n_bootstrap))
+cat("  [X] DeLong test for AUC comparison\n")
+cat("  [X] Hosmer-Lemeshow calibration test\n")
+cat("  [X] Brier score calculation\n")
+cat("  [X] ICC inter-rater reliability\n")
+cat("  [X] Fleiss' Kappa for categorical risk\n")
+cat("  [X] Bland-Altman plots for systematic bias\n")
+cat("  [X] NRI (Net Reclassification Improvement)\n")
+cat("  [X] IDI (Integrated Discrimination Improvement)\n")
+cat("  [X] DCA (Decision Curve Analysis)\n")
+
+cat("\nKey Results:\n")
+cat(sprintf("  AI Model AUC: %.3f [95%% CI: %.3f-%.3f]\n",
+            auc_ai_boot$auc, auc_ai_boot$ci_lower, auc_ai_boot$ci_upper))
+cat(sprintf("  Expert Stage 2 AUC: %.3f [95%% CI: %.3f-%.3f]\n",
+            auc_s2_boot$auc, auc_s2_boot$ci_lower, auc_s2_boot$ci_upper))
+cat(sprintf("  DeLong test (AI vs Expert S2): p=%.4f\n", delong_s2$p.value))
+
+cat("\nOutput Directory:\n")
+cat(sprintf("  %s\n", opt$output_dir))
+
+cat("\nFigures Directory:\n")
+cat(sprintf("  %s\n", figures_dir))
+
+cat("\n")
+cat(strrep("=", 70), "\n")
