@@ -28,7 +28,7 @@ def extract_baseline_records(df):
 
 baseline_data = extract_baseline_records(diag_data)
 
-## Filter baseline MCI patients
+## Filter baseline MCI patients (aligned with Methods: MCI at baseline)
 diagnosis_col = 'DIAGNOSIS'
 
 def is_mci_diagnosis(dx_value):
@@ -43,20 +43,25 @@ def is_mci_diagnosis(dx_value):
 mci_baseline = baseline_data[baseline_data[diagnosis_col].apply(is_mci_diagnosis)].copy()
 mci_ptid_list = mci_baseline['PTID'].unique()
 
+print(f"Baseline MCI patients: {len(mci_ptid_list)}")
+
 ## Extract follow-up visits
 all_viscodes = diag_data['VISCODE'].unique()
 followup_viscodes = []
 
-for month in [1, 3, 6, 12, 18, 24, 30, 36]:
+for month in [1, 3, 6, 12, 18, 24, 30, 36, 48, 60, 72]:
     for prefix in ['m', 'M', 'v', 'V']:
         code = f"{prefix}{month:02d}" if month < 10 else f"{prefix}{month}"
         if code in all_viscodes:
             followup_viscodes.append(code)
 
-alt_codes = ['m1', 'm3', 'm6', 'm12', 'm18', 'm24', 'm30', 'm36', 'M1', 'M3', 'M6', 'M12', 'M18', 'M24', 'M30', 'M36']
+alt_codes = ['m1', 'm3', 'm6', 'm12', 'm18', 'm24', 'm30', 'm36', 
+             'M1', 'M3', 'M6', 'M12', 'M18', 'M24', 'M30', 'M36']
 for code in alt_codes:
     if code in all_viscodes and code not in followup_viscodes:
         followup_viscodes.append(code)
+
+print(f"Follow-up visit codes: {len(followup_viscodes)}")
 
 ## Get follow-up data for MCI patients
 followup_data = diag_data[
@@ -64,7 +69,7 @@ followup_data = diag_data[
     (diag_data['VISCODE'].isin(followup_viscodes))
 ].copy()
 
-## Identify converters (MCI to AD)
+## Identify converters (MCI to AD dementia per NIA-AA criteria)
 def is_ad_diagnosis(dx_value):
     if pd.isna(dx_value):
         return False
@@ -98,5 +103,13 @@ for ptid in mci_ptid_list:
 outcome_df = pd.DataFrame(conversion_results)
 outcome_final = outcome_df[['ID', 'AD_Conversion']].copy()
 
-## Output
+## Output with summary statistics
 outcome_final.to_csv("AD_Conversion.csv", index=False)
+
+converters = outcome_final['AD_Conversion'].sum()
+conversion_rate = converters / len(outcome_final) * 100
+
+print(f"\nOutcome creation complete:")
+print(f"- Total MCI patients: {len(outcome_final)}")
+print(f"- Converters to AD: {converters} ({conversion_rate:.1f}%)")
+print(f"- Non-converters: {len(outcome_final) - converters}")
