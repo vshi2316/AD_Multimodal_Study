@@ -34,12 +34,6 @@ opt <- parse_args(opt_parser)
 # Create output directory
 dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
 
-cat("========================================================================\n")
-cat("   Step 10: Differential Analysis (Methods 2.4/2.8 Aligned)\n")
-cat("========================================================================\n\n")
-cat(sprintf("FDR threshold: q < %.2f (Methods 2.4)\n", opt$fdr_threshold))
-cat(sprintf("SMD threshold: |SMD| > %.1f (Methods 2.4)\n\n", opt$smd_threshold))
-
 # ==============================================================================
 # Methods 2.8: Effect Size Functions
 # ==============================================================================
@@ -604,3 +598,4 @@ cat("  - FDR threshold: q < 0.05 (Methods 2.4)\n")
 cat("  - SMD threshold: |SMD| > 0.5 (Methods 2.4)\n")
 cat("  - Eta-squared with Cohen's criteria (Methods 2.8)\n")
 cat("========================================================================\n")
+
