@@ -41,8 +41,7 @@ def extract_apoe4_features(genotype):
     """
     Extract APOE ε4 features from genotype string.
     
-    Methods 2.2: "individuals carrying ≥1 ε4 allele were classified 
-    as APOE ε4-positive"
+    Methods 2.2: "individuals carrying ≥1 ε4 allele were classified as APOE ε4-positive"
     
     Args:
         genotype: APOE genotype string (e.g., "3/4", "4/4", "3/3")
@@ -133,19 +132,20 @@ def preprocess_apoe(input_file, output_file, output_dir):
     print(f"\n  APOE ε4 Status Distribution:")
     print(f"    ε4-positive: {n_e4_positive} ({100*n_e4_positive/len(apoe_clean):.1f}%)")
     print(f"    ε4-negative: {n_e4_negative} ({100*n_e4_negative/len(apoe_clean):.1f}%)")
+    
     print(f"\n  APOE ε4 Dosage Distribution:")
     print(f"    Homozygous (ε4/ε4): {n_homozygous} ({100*n_homozygous/len(apoe_clean):.1f}%)")
     print(f"    Heterozygous (ε4/x): {n_heterozygous} ({100*n_heterozygous/len(apoe_clean):.1f}%)")
     print(f"    Non-carrier: {n_e4_negative} ({100*n_e4_negative/len(apoe_clean):.1f}%)")
     
     # Prepare final output
-    # Note: APOE_VAR is the column name expected by step8 (uses dosage 0/1/2)
     print("\n[4/4] Saving processed data...")
     apoe_final = apoe_clean[['ID', 'APOE4_DOSAGE', 'APOE4_STATUS']].copy()
-    apoe_final = apoe_final.rename(columns={'APOE4_DOSAGE': 'APOE_VAR'})
     
     # Save to output file
-    output_path = output_file if os.path.isabs(output_file) else os.path.join(output_dir, os.path.basename(output_file))
+    output_path = output_file if os.path.isabs(output_file) else os.path.join(
+        output_dir, os.path.basename(output_file)
+    )
     apoe_final.to_csv(output_path, index=False)
     print(f"  Saved: {output_path}")
     print(f"  Total subjects: {len(apoe_final)}")
