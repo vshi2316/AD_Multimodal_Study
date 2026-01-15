@@ -32,22 +32,27 @@ amyloid_baseline = extract_baseline(amyloid_pet)
 tau_baseline = extract_baseline(tau_pet)
 
 ## Extract PET SUVR features
-def extract_pet_features(df, roi_keywords):
+def extract_pet_features(df, roi_keywords, modality_name):
     features = []
     for col in df.columns:
         col_lower = col.lower()
         if 'suvr' in col_lower and any(roi in col_lower for roi in roi_keywords):
             features.append(col)
+    
     if len(features) < 5:
         suvr_cols = [col for col in df.columns if 'suvr' in col.lower()]
         features = suvr_cols[:15]
+    
+    print(f"{modality_name}: {len(features)} SUVR features extracted")
     return features
 
-amyloid_roi_keywords = ['frontal', 'temporal', 'parietal', 'cingulate', 'precuneus', 'global', 'composite', 'cortical']
-amyloid_features = extract_pet_features(amyloid_baseline, amyloid_roi_keywords)
+amyloid_roi_keywords = ['frontal', 'temporal', 'parietal', 'cingulate', 'precuneus', 
+                        'global', 'composite', 'cortical']
+amyloid_features = extract_pet_features(amyloid_baseline, amyloid_roi_keywords, "Amyloid-PET")
 
-tau_roi_keywords = ['entorhinal', 'hippocampus', 'temporal', 'fusiform', 'parahippocampal', 'global', 'composite']
-tau_features = extract_pet_features(tau_baseline, tau_roi_keywords)
+tau_roi_keywords = ['entorhinal', 'hippocampus', 'temporal', 'fusiform', 
+                    'parahippocampal', 'global', 'composite']
+tau_features = extract_pet_features(tau_baseline, tau_roi_keywords, "Tau-PET")
 
 ## Extract ID and features
 amyloid_id_col = 'PTID' if 'PTID' in amyloid_baseline.columns else 'RID'
@@ -62,8 +67,9 @@ tau_data.columns = ['ID'] + [f'Tau_{col}' for col in tau_features]
 
 ## Merge Amyloid and Tau PET data
 pet_merged = pd.merge(amyloid_data, tau_data, on='ID', how='inner')
-
 all_features = [col for col in pet_merged.columns if col != 'ID']
+
+print(f"\nMerged PET data: {len(pet_merged)} samples with {len(all_features)} features")
 
 ## Handle missing values
 for col in all_features:
@@ -73,7 +79,6 @@ for col in all_features:
 
 ## Handle negative values for log transformation
 features_matrix = pet_merged[all_features].copy()
-
 min_val = features_matrix.min().min()
 if min_val <= 0:
     for col in all_features:
@@ -86,7 +91,6 @@ if min_val <= 0:
 sample_sums = features_matrix.sum(axis=1)
 median_sum = sample_sums.median()
 sum_norm = features_matrix.div(sample_sums, axis=0) * median_sum
-
 log_norm = np.log2(sum_norm + 1)
 
 scaler = StandardScaler()
@@ -94,9 +98,10 @@ pareto_norm = scaler.fit_transform(log_norm)
 pareto_norm_df = pd.DataFrame(pareto_norm, columns=all_features, index=features_matrix.index)
 
 ## Output
-final_pet = pd.concat([
-    pet_merged[['ID']].reset_index(drop=True),
-    pareto_norm_df.reset_index(drop=True)
-], axis=1)
+final_pet = pd.concat([pet_merged[['ID']].reset_index(drop=True),
+                       pareto_norm_df.reset_index(drop=True)], axis=1)
 
 final_pet.to_csv("PET_features.csv", index=False)
+print(f"\nPET preprocessing complete:")
+print(f"- Final sample size: {len(final_pet)}")
+print(f"- Features: {len(all_features)}")
