@@ -2,217 +2,432 @@ library(meta)
 library(metafor)
 library(dplyr)
 library(ggplot2)
+library(optparse)
 
-perf_table <- read.csv("External_Validation_Performance.csv",
-                       stringsAsFactors = FALSE)
+# ==============================================================================
+# Parse Command Line Arguments
+# ==============================================================================
+option_list <- list(
+  make_option(c("--perf_file"), type = "character", 
+              default = "External_Validation_Performance.csv",
+              help = "Path to external validation performance CSV [default: %default]"),
+  make_option(c("--habs_file"), type = "character", 
+              default = "HABS_Baseline_Integrated.csv",
+              help = "Path to HABS integrated CSV for missing data analysis [default: %default]"),
+  make_option(c("--output_dir"), type = "character", 
+              default = "./results",
+              help = "Output directory [default: %default]"),
+  make_option(c("--i2_moderate"), type = "numeric", default = 50,
+              help = "I² threshold for moderate heterogeneity (Methods 2.7: >50%%) [default: %default]"),
+  make_option(c("--i2_high"), type = "numeric", default = 75,
+              help = "I² threshold for high heterogeneity (Methods 2.7: >75%%) [default: %default]")
+)
 
+opt_parser <- OptionParser(option_list = option_list)
+opt <- parse_args(opt_parser)
+
+# Create output directory
+dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ==============================================================================
+# Part 1: Load and Prepare Data
+# ==============================================================================
+cat("[1/6] Loading and preparing data...\n")
+
+perf_table <- read.csv(opt$perf_file, stringsAsFactors = FALSE)
+
+# Parse AUC and CI
 meta_data <- perf_table %>%
-  select(Cohort, N, Events, AUC, AUC_95CI,
-         Validation_Type, pTau217_Availability) %>%
+  select(Cohort, N, Events, AUC, AUC_95CI, 
+         matches("Validation_Type|pTau217_Availability")) %>%
   mutate(
+    # Parse CI from string format "0.xxx-0.xxx"
     AUC_Lower = as.numeric(sapply(strsplit(AUC_95CI, "-"), `[`, 1)),
     AUC_Upper = as.numeric(sapply(strsplit(AUC_95CI, "-"), `[`, 2)),
-    AUC_SE    = (AUC_Upper - AUC_Lower) / (2 * 1.96),
+    AUC_SE = (AUC_Upper - AUC_Lower) / (2 * 1.96),
     Event_Rate = Events / N
-  ) %>%
-  select(Cohort, N, Events, AUC, AUC_Lower, AUC_Upper,
-         AUC_SE, Event_Rate, Validation_Type, pTau217_Availability)
+  )
 
-cat("Cohort summary:\n")
+# Add validation type if not present
+if (!"Validation_Type" %in% colnames(meta_data)) {
+  meta_data$Validation_Type <- "External"
+}
+
+cat(sprintf("  Cohorts included: %d\n", nrow(meta_data)))
+cat(sprintf("  Total N: %d\n", sum(meta_data$N)))
+cat(sprintf("  Total Events: %d\n\n", sum(meta_data$Events)))
+
+# Display cohort summary
+cat("Cohort Summary:\n")
 summary_table <- meta_data %>%
   mutate(
     Event_Pct = sprintf("%.1f%%", 100 * Event_Rate),
-    AUC_CI    = sprintf("%.3f (%.3f–%.3f)", AUC, AUC_Lower, AUC_Upper)
+    AUC_CI = sprintf("%.3f (%.3f–%.3f)", AUC, AUC_Lower, AUC_Upper)
   ) %>%
-  select(Cohort, N, Events, Event_Pct, AUC_CI,
-         Validation_Type, pTau217_Availability)
+  select(Cohort, N, Events, Event_Pct, AUC_CI)
 
 print(summary_table)
+cat("\n")
 
-validation_types <- unique(meta_data$Validation_Type)
-cat(sprintf("\nValidation types: %s\n",
-            paste(validation_types, collapse = ", ")))
+# ==============================================================================
+# Part 2: Random-Effects Meta-Analysis (Methods 2.7)
+# ==============================================================================
+cat("[2/6] Random-effects meta-analysis (Methods 2.7)...\n")
 
-## ============================================================
-## 2. Random-effects meta-analysis of AUC
-## ============================================================
-
-cat("\nRandom-effects meta-analysis of AUC\n")
-
+# Perform meta-analysis using DerSimonian-Laird estimator
 meta_result <- metagen(
-  TE      = meta_data$AUC,
-  seTE    = meta_data$AUC_SE,
+  TE = meta_data$AUC,
+  seTE = meta_data$AUC_SE,
   studlab = meta_data$Cohort,
-  n.e     = meta_data$N,
-  data    = meta_data,
-  sm      = "AUC",
-  common  = FALSE,
-  random  = TRUE,
-  method.tau      = "DL",
-  method.random.ci = "HK",
-  title   = "External Validation Meta-analysis (Corrected)"
+  n.e = meta_data$N,
+  data = meta_data,
+  sm = "AUC",
+  common = FALSE,
+  random = TRUE,
+  method.tau = "DL",  # DerSimonian-Laird
+  method.random.ci = "HK",  # Hartung-Knapp adjustment
+  title = "External Validation Meta-analysis"
 )
 
-pooled_auc   <- meta_result$TE.random
+# Extract results
+pooled_auc <- meta_result$TE.random
 pooled_lower <- meta_result$lower.random
 pooled_upper <- meta_result$upper.random
-i2_value     <- meta_result$I2
-tau2_value   <- meta_result$tau2
-q_value      <- meta_result$Q
-q_pvalue     <- meta_result$pval.Q
+i2_value <- meta_result$I2
+tau2_value <- meta_result$tau2
+q_value <- meta_result$Q
+q_pvalue <- meta_result$pval.Q
 
-cat(sprintf("Pooled AUC: %.3f (95%% CI %.3f–%.3f)\n",
+# Interpret heterogeneity (Methods 2.7)
+if (i2_value > opt$i2_high) {
+  heterogeneity_level <- "High"
+} else if (i2_value > opt$i2_moderate) {
+  heterogeneity_level <- "Moderate"
+} else {
+  heterogeneity_level <- "Low"
+}
+
+cat(sprintf("\nPooled AUC: %.3f (95%% CI: %.3f–%.3f)\n", 
             pooled_auc, pooled_lower, pooled_upper))
-cat(sprintf("Heterogeneity: I^2 = %.1f%%, tau^2 = %.4f\n",
-            i2_value, tau2_value))
-cat(sprintf("Cochran Q: %.2f (p=%.4f)\n", q_value, q_pvalue))
+cat(sprintf("Heterogeneity: I² = %.1f%% (%s), τ² = %.4f\n", 
+            i2_value, heterogeneity_level, tau2_value))
+cat(sprintf("Cochran's Q: %.2f (p = %.4f)\n\n", q_value, q_pvalue))
 
-## ============================================================
-## 3. Forest plot
-## ============================================================
+# ==============================================================================
+# Part 3: Forest Plot
+# ==============================================================================
+cat("[3/6] Generating forest plot...\n")
 
-png("step18_fig1_meta_forest_corrected.png",
+png(file.path(opt$output_dir, "step18_fig1_meta_forest.png"),
     width = 4000, height = 2800, res = 300)
 
 forest(meta_result,
-       sortvar           = meta_data$N,
-       prediction        = TRUE,
-       print.tau2        = TRUE,
-       col.square        = "navy",
-       col.square.lines  = "navy",
-       col.diamond       = "darkred",
+       sortvar = meta_data$N,
+       prediction = TRUE,
+       print.tau2 = TRUE,
+       col.square = "navy",
+       col.square.lines = "navy",
+       col.diamond = "darkred",
        col.diamond.lines = "darkred",
-       col.predict       = "purple",
-       print.I2          = TRUE,
-       print.I2.ci       = TRUE,
-       digits            = 3,
-       common            = FALSE,
-       random            = TRUE,
-       leftcols          = c("studlab", "n.e", "effect", "ci"),
-       leftlabs          = c("Cohort", "N", "AUC", "95% CI"),
-       smlab             = "",
-       rightcols         = c("w.random"),
-       rightlabs         = c("Weight"),
-       fontsize          = 11,
-       fs.heading        = 13,
-       squaresize        = 0.6,
-       main = "External Validation Meta-analysis (Corrected)")
+       col.predict = "purple",
+       print.I2 = TRUE,
+       print.I2.ci = TRUE,
+       digits = 3,
+       common = FALSE,
+       random = TRUE,
+       leftcols = c("studlab", "n.e", "effect", "ci"),
+       leftlabs = c("Cohort", "N", "AUC", "95% CI"),
+       smlab = "",
+       rightcols = c("w.random"),
+       rightlabs = c("Weight"),
+       fontsize = 11,
+       fs.heading = 13,
+       squaresize = 0.6,
+       main = sprintf("External Validation Meta-analysis (I² = %.1f%%, %s heterogeneity)",
+                      i2_value, heterogeneity_level))
 
 dev.off()
-cat("Saved forest plot: step18_fig1_meta_forest_corrected.png\n")
+cat("  Saved: step18_fig1_meta_forest.png\n\n")
 
-## ============================================================
-## 4. Heterogeneity and weight distribution
-## ============================================================
+# ==============================================================================
+# Part 4: Sensitivity Analysis - Leave-One-Out (Methods 2.7)
+# ==============================================================================
+cat("[4/6] Sensitivity analysis (leave-one-out)...\n")
 
-cat("\nHeterogeneity sources and weight distribution\n")
+sensitivity_results <- data.frame()
 
-sample_ratio   <- max(meta_data$N) / min(meta_data$N)
-event_rate_diff <- max(meta_data$Event_Rate) - min(meta_data$Event_Rate)
-auc_range      <- max(meta_data$AUC) - min(meta_data$AUC)
+for (i in 1:nrow(meta_data)) {
+  # Exclude cohort i
+  meta_subset <- meta_data[-i, ]
+  
+  if (nrow(meta_subset) >= 2) {
+    meta_loo <- metagen(
+      TE = meta_subset$AUC,
+      seTE = meta_subset$AUC_SE,
+      studlab = meta_subset$Cohort,
+      n.e = meta_subset$N,
+      data = meta_subset,
+      sm = "AUC",
+      common = FALSE,
+      random = TRUE,
+      method.tau = "DL"
+    )
+    
+    sensitivity_results <- rbind(sensitivity_results, data.frame(
+      Excluded_Cohort = meta_data$Cohort[i],
+      Pooled_AUC = meta_loo$TE.random,
+      CI_Lower = meta_loo$lower.random,
+      CI_Upper = meta_loo$upper.random,
+      I2 = meta_loo$I2,
+      Change_AUC = meta_loo$TE.random - pooled_auc
+    ))
+  }
+}
 
-cat(sprintf("Sample size ratio (max/min): %.1f\n", sample_ratio))
-cat(sprintf("Event rate difference: %.1f%%\n", 100 * event_rate_diff))
-cat(sprintf("AUC range: %.3f (%.3f–%.3f)\n",
-            auc_range, min(meta_data$AUC), max(meta_data$AUC)))
+cat("\nLeave-One-Out Sensitivity Analysis:\n")
+for (i in 1:nrow(sensitivity_results)) {
+  cat(sprintf("  Excluding %s: AUC = %.3f (%.3f–%.3f), I² = %.1f%%, ΔAUC = %+.3f\n",
+              sensitivity_results$Excluded_Cohort[i],
+              sensitivity_results$Pooled_AUC[i],
+              sensitivity_results$CI_Lower[i],
+              sensitivity_results$CI_Upper[i],
+              sensitivity_results$I2[i],
+              sensitivity_results$Change_AUC[i]))
+}
 
+write.csv(sensitivity_results, 
+          file.path(opt$output_dir, "step18_sensitivity_analysis.csv"), 
+          row.names = FALSE)
+cat("\n")
+
+# ==============================================================================
+# Part 5: Weight Distribution and Heterogeneity Analysis
+# ==============================================================================
+cat("[5/6] Analyzing weight distribution and heterogeneity sources...\n")
+
+# Calculate weights
 weights <- meta_result$w.random
 weight_data <- data.frame(
   Cohort = meta_data$Cohort,
-  Weight = 100 * weights / sum(weights),
-  N      = meta_data$N,
-  AUC    = meta_data$AUC
-)
+  Weight_Pct = 100 * weights / sum(weights),
+  N = meta_data$N,
+  Events = meta_data$Events,
+  Event_Rate = meta_data$Event_Rate,
+  AUC = meta_data$AUC
+) %>%
+  arrange(desc(Weight_Pct))
 
-cat("\nCohort weights:\n")
-for (i in seq_len(nrow(weight_data))) {
-  cat(sprintf("  %s: %.1f%% (N=%d, AUC=%.3f)\n",
+cat("\nCohort Weights:\n")
+for (i in 1:nrow(weight_data)) {
+  cat(sprintf("  %s: %.1f%% (N=%d, Events=%d, Rate=%.1f%%, AUC=%.3f)\n",
               weight_data$Cohort[i],
-              weight_data$Weight[i],
+              weight_data$Weight_Pct[i],
               weight_data$N[i],
+              weight_data$Events[i],
+              100 * weight_data$Event_Rate[i],
               weight_data$AUC[i]))
 }
 
-png("step18_fig2_weight_distribution.png",
+# Heterogeneity sources
+sample_ratio <- max(meta_data$N) / min(meta_data$N)
+event_rate_range <- max(meta_data$Event_Rate) - min(meta_data$Event_Rate)
+auc_range <- max(meta_data$AUC) - min(meta_data$AUC)
+
+cat(sprintf("\nHeterogeneity Sources:\n"))
+cat(sprintf("  Sample size ratio (max/min): %.1f\n", sample_ratio))
+cat(sprintf("  Event rate range: %.1f%% (%.1f%% – %.1f%%)\n", 
+            100 * event_rate_range, 
+            100 * min(meta_data$Event_Rate), 
+            100 * max(meta_data$Event_Rate)))
+cat(sprintf("  AUC range: %.3f (%.3f – %.3f)\n\n", 
+            auc_range, min(meta_data$AUC), max(meta_data$AUC)))
+
+# Weight distribution plot
+png(file.path(opt$output_dir, "step18_fig2_weight_distribution.png"),
     width = 3200, height = 2400, res = 300)
 
-par(mar = c(5, 8, 4, 2))
-barplot(weight_data$Weight,
+par(mar = c(5, 10, 4, 2))
+barplot(weight_data$Weight_Pct,
         names.arg = weight_data$Cohort,
         horiz = TRUE,
-        col = c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3")[seq_len(nrow(weight_data))],
+        col = c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3")[1:nrow(weight_data)],
         xlab = "Weight (%)",
-        main = "Weight Distribution in Corrected Meta-analysis",
-        cex.names = 1.3,
-        cex.lab = 1.4,
-        cex.main = 1.6,
+        main = "Weight Distribution in Random-Effects Meta-analysis",
+        cex.names = 1.2,
+        cex.lab = 1.3,
+        cex.main = 1.5,
         las = 1,
-        xlim = c(0, max(weight_data$Weight) * 1.2))
+        xlim = c(0, max(weight_data$Weight_Pct) * 1.3))
 
-text(weight_data$Weight + max(weight_data$Weight) * 0.05,
+# Add labels
+text(weight_data$Weight_Pct + max(weight_data$Weight_Pct) * 0.05,
      seq(0.7, by = 1.2, length.out = nrow(weight_data)),
-     sprintf("%.1f%% (N=%d, AUC=%.3f)",
-             weight_data$Weight, weight_data$N, weight_data$AUC),
+     sprintf("%.1f%% (N=%d)", weight_data$Weight_Pct, weight_data$N),
      cex = 1.0, adj = 0)
 
 dev.off()
-cat("Saved weight distribution: step18_fig2_weight_distribution.png\n")
+cat("  Saved: step18_fig2_weight_distribution.png\n")
 
-## ============================================================
-## 5. Funnel plot (limited small-study bias assessment)
-## ============================================================
-
-png("step18_fig3_funnel_plot_limited.png",
+# Funnel plot
+png(file.path(opt$output_dir, "step18_fig3_funnel_plot.png"),
     width = 3200, height = 2800, res = 300)
 
 funnel(meta_result,
-       xlab       = "AUC",
-       studlab    = TRUE,
-       cex        = 1.3,
+       xlab = "AUC",
+       studlab = TRUE,
+       cex = 1.3,
        cex.studlab = 1.1,
-       col        = "navy",
-       bg         = "lightblue",
-       pch        = 21)
+       col = "navy",
+       bg = "lightblue",
+       pch = 21)
 
-n_studies <- nrow(meta_data)
-title(sprintf("Funnel Plot (n=%d studies, corrected data)", n_studies),
+title(sprintf("Funnel Plot (n=%d cohorts)", nrow(meta_data)),
       cex.main = 1.5, font.main = 2)
 
 dev.off()
-cat("Saved funnel plot: step18_fig3_funnel_plot_limited.png\n")
+cat("  Saved: step18_fig3_funnel_plot.png\n\n")
 
-## ============================================================
-## 6. HABS missing data summary (sensitivity)
-## ============================================================
+# ==============================================================================
+# Part 6: HABS Missing Data Analysis (if available)
+# ==============================================================================
+cat("[6/6] HABS missing data analysis...\n")
 
-  habs_data <- read.csv("HABS_Baseline_Integrated.csv",
-                        stringsAsFactors = FALSE)
-  key_vars <- c("Age", "Gender", "APOE4_Positive",
-                "MMSE_Baseline", "AD_Conversion")
+if (file.exists(opt$habs_file)) {
+  habs_data <- read.csv(opt$habs_file, stringsAsFactors = FALSE)
+  
+  key_vars <- c("Age", "Gender", "APOE4_Positive", "MMSE_Baseline", 
+                "AD_Conversion", "pTau217_Primary")
   available_vars <- key_vars[key_vars %in% colnames(habs_data)]
+  
   if (length(available_vars) > 0) {
-    habs_subset <- habs_data[, available_vars]
+    habs_subset <- habs_data[, available_vars, drop = FALSE]
+    
     missing_summary <- data.frame(
-      Variable   = available_vars,
-      N_Missing  = colSums(is.na(habs_subset)),
-      Pct_Missing = 100 * colMeans(is.na(habs_subset))
+      Variable = available_vars,
+      N_Total = nrow(habs_subset),
+      N_Missing = colSums(is.na(habs_subset)),
+      Pct_Missing = 100 * colMeans(is.na(habs_subset)),
+      N_Available = colSums(!is.na(habs_subset))
     )
-    print(missing_summary)
-    write.csv(missing_summary,
-              "step18_habs_missing_analysis.csv",
+    
+    cat("\nHABS Missing Data Summary:\n")
+    for (i in 1:nrow(missing_summary)) {
+      cat(sprintf("  %s: %d/%d available (%.1f%% missing)\n",
+                  missing_summary$Variable[i],
+                  missing_summary$N_Available[i],
+                  missing_summary$N_Total[i],
+                  missing_summary$Pct_Missing[i]))
+    }
+    
+    write.csv(missing_summary, 
+              file.path(opt$output_dir, "step18_habs_missing_analysis.csv"), 
               row.names = FALSE)
-    cat("Saved HABS missing analysis: step18_habs_missing_analysis.csv\n")
+    cat("  Saved: step18_habs_missing_analysis.csv\n")
   }
 } else {
-  cat("\nHABS data file not found. Skipping missing data summary.\n")
+  cat("  HABS file not found, skipping missing data analysis\n")
 }
 
-## ============================================================
-## 7. Save key meta-analysis objects
-## ============================================================
+# ==============================================================================
+# Save Results and Summary Report
+# ==============================================================================
+cat("\n")
 
-save(meta_data, meta_result, weight_data,
-     file = "step18_meta_analysis_results.RData")
+# Save meta-analysis objects
+save(meta_data, meta_result, weight_data, sensitivity_results,
+     file = file.path(opt$output_dir, "step18_meta_analysis_results.RData"))
 
-cat("\nStep 18 complete. Meta-analysis results and figures saved.\n")
+# Generate summary report
+summary_lines <- c(
+  "================================================================================",
+  "Meta-Analysis Report (Methods 2.7 Aligned)",
+  "================================================================================",
+  "",
+  sprintf("Generated: %s", Sys.time()),
+  "",
+  "Methods 2.7 Requirements:",
+  "  - Random-effects meta-analysis (DerSimonian-Laird estimator)",
+  sprintf("  - I² heterogeneity thresholds: >%.0f%% moderate, >%.0f%% high", 
+          opt$i2_moderate, opt$i2_high),
+  "  - Forest plots with individual and pooled effects",
+  "  - Sensitivity analyses (leave-one-out)",
+  "",
+  "--------------------------------------------------------------------------------",
+  "Cohort Summary",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Number of cohorts: %d", nrow(meta_data)),
+  sprintf("  Total sample size: %d", sum(meta_data$N)),
+  sprintf("  Total events: %d (%.1f%%)", sum(meta_data$Events), 
+          100 * sum(meta_data$Events) / sum(meta_data$N)),
+  ""
+)
 
+for (i in 1:nrow(meta_data)) {
+  summary_lines <- c(summary_lines,
+    sprintf("  %s: N=%d, Events=%d (%.1f%%), AUC=%.3f",
+            meta_data$Cohort[i], meta_data$N[i], meta_data$Events[i],
+            100 * meta_data$Event_Rate[i], meta_data$AUC[i]))
+}
+
+summary_lines <- c(summary_lines,
+  "",
+  "--------------------------------------------------------------------------------",
+  "Meta-Analysis Results",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Pooled AUC: %.3f (95%% CI: %.3f–%.3f)", 
+          pooled_auc, pooled_lower, pooled_upper),
+  sprintf("  Heterogeneity: I² = %.1f%% (%s)", i2_value, heterogeneity_level),
+  sprintf("  Between-study variance: τ² = %.4f", tau2_value),
+  sprintf("  Cochran's Q: %.2f (p = %.4f)", q_value, q_pvalue),
+  "",
+  "--------------------------------------------------------------------------------",
+  "Sensitivity Analysis (Leave-One-Out)",
+  "--------------------------------------------------------------------------------"
+)
+
+for (i in 1:nrow(sensitivity_results)) {
+  summary_lines <- c(summary_lines,
+    sprintf("  Excluding %s: AUC = %.3f, I² = %.1f%%, ΔAUC = %+.3f",
+            sensitivity_results$Excluded_Cohort[i],
+            sensitivity_results$Pooled_AUC[i],
+            sensitivity_results$I2[i],
+            sensitivity_results$Change_AUC[i]))
+}
+
+summary_lines <- c(summary_lines,
+  "",
+  "--------------------------------------------------------------------------------",
+  "Interpretation (Methods 2.7)",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Heterogeneity level: %s (I² = %.1f%%)", heterogeneity_level, i2_value),
+  ifelse(i2_value > opt$i2_high,
+         "  → High heterogeneity suggests substantial between-study variability",
+         ifelse(i2_value > opt$i2_moderate,
+                "  → Moderate heterogeneity suggests some between-study variability",
+                "  → Low heterogeneity suggests consistent effects across studies")),
+  "",
+  "--------------------------------------------------------------------------------",
+  "Output Files",
+  "--------------------------------------------------------------------------------",
+  sprintf("  - %s/step18_meta_analysis_results.RData", opt$output_dir),
+  sprintf("  - %s/step18_sensitivity_analysis.csv", opt$output_dir),
+  sprintf("  - %s/step18_fig1_meta_forest.png", opt$output_dir),
+  sprintf("  - %s/step18_fig2_weight_distribution.png", opt$output_dir),
+  sprintf("  - %s/step18_fig3_funnel_plot.png", opt$output_dir),
+  "",
+  "================================================================================",
+  "Meta-Analysis Complete",
+  "================================================================================"
+)
+
+# Write report
+report_path <- file.path(opt$output_dir, "Meta_Analysis_Report.txt")
+writeLines(summary_lines, report_path)
+
+cat(paste(summary_lines, collapse = "\n"))
+cat("\n\n")
+
+cat("============================================================\n")
+cat("Step 18: Meta-Analysis Complete!\n")
+cat("============================================================\n")
+cat(sprintf("Report saved: %s\n", report_path))
