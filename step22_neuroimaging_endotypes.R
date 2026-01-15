@@ -1,58 +1,127 @@
 library(tidyverse)
 library(ggplot2)
 library(patchwork)
-library(ggseg)
-library(ggsegYeo2011)
-library(stringr) 
-## ============================================================================
-## Part 1: Data Loading and Preparation
-## ============================================================================
-cat("Part 1: Data Loading\n")
+library(optparse)
 
-data_raw <- read.csv("ADNI_Labeled_For_Classifier.csv", stringsAsFactors = FALSE)
-cat(sprintf("Raw data: %d samples\n", nrow(data_raw)))
+# ==============================================================================
+# Parse Command Line Arguments
+# ==============================================================================
+option_list <- list(
+  make_option(c("--data_file"), type = "character", 
+              default = "ADNI_Labeled_For_Classifier.csv",
+              help = "Path to labeled data CSV [default: %default]"),
+  make_option(c("--output_dir"), type = "character", 
+              default = "./results",
+              help = "Output directory [default: %default]"),
+  make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
+              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]")
+)
 
+opt_parser <- OptionParser(option_list = option_list)
+opt <- parse_args(opt_parser)
+
+# Create output directory
+dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ==============================================================================
+# Part 1: Data Loading and Preparation
+# ==============================================================================
+cat("[1/6] Loading and preparing data...\n")
+
+data_raw <- read.csv(opt$data_file, stringsAsFactors = FALSE)
+cat(sprintf("  Raw data: %d samples\n", nrow(data_raw)))
+
+# Define feature groups
 clinical_features <- c("ADAS13", "CDRSB", "FAQTOTAL", "MMSE_Baseline")
-mri_features <- c("RightParacentral_TA", "RightParahippocampal_TA", 
-                  "RightParsOpercularis_TA", "RightParsOrbitalis_TA",
-                  "RightParacentral_CV", "RightParahippocampal_CV", 
-                  "RightParsOrbitalis_CV")
+clinical_features <- clinical_features[clinical_features %in% colnames(data_raw)]
+
+# MRI features - map ST codes to anatomical names
+mri_mapping <- list(
+  "ST102TA" = "RightParacentral_TA",
+  "ST102CV" = "RightParacentral_CV",
+  "ST103TA" = "RightParahippocampal_TA",
+  "ST103CV" = "RightParahippocampal_CV",
+  "ST104TA" = "RightParsOpercularis_TA",
+  "ST105TA" = "RightParsOrbitalis_TA",
+  "ST105CV" = "RightParsOrbitalis_CV"
+)
+
+# Rename columns if ST codes exist
+data <- data_raw
+for (st_code in names(mri_mapping)) {
+  if (st_code %in% colnames(data)) {
+    data <- data %>% rename(!!mri_mapping[[st_code]] := !!st_code)
+  }
+}
+
+mri_features <- unlist(mri_mapping)
+mri_features <- mri_features[mri_features %in% colnames(data)]
+
 covariates <- c("MMSE_Baseline", "Age")
+covariates <- covariates[covariates %in% colnames(data)]
 
-data <- data_raw %>%
-  rename(RightParacentral_TA = ST102TA, RightParacentral_CV = ST102CV,
-         RightParahippocampal_TA = ST103TA, RightParahippocampal_CV = ST103CV,
-         RightParsOpercularis_TA = ST104TA, RightParsOrbitalis_TA = ST105TA,
-         RightParsOrbitalis_CV = ST105CV) %>%
-  select(ID, Subtype, all_of(clinical_features), all_of(mri_features),
-         all_of(covariates), Gender) %>%
-  drop_na()
+# Select and clean data
+all_features <- c("ID", "Subtype", clinical_features, mri_features, covariates, "Gender")
+all_features <- all_features[all_features %in% colnames(data)]
 
-# Calculate global composite metrics for disproportionate atrophy analysis (Part 4.5)
-ta_features <- str_subset(mri_features, "_TA$")
-cv_features <- str_subset(mri_features, "_CV$")
-data$Global_TA_Composite <- rowMeans(data[, ta_features], na.rm = TRUE)
-data$Global_CV_Composite <- rowMeans(data[, cv_features], na.rm = TRUE)
+data <- data %>%
+  select(all_of(all_features)) %>%
+  filter(!is.na(Subtype)) %>%
+  drop_na(any_of(c(clinical_features, mri_features)))
 
-cat(sprintf("Complete data: %d samples\n", nrow(data)))
-cat("Endotype distribution:\n")
-print(table(data$Subtype))
+# Calculate global composite metrics for disproportionate atrophy analysis
+ta_features <- mri_features[str_detect(mri_features, "_TA$")]
+cv_features <- mri_features[str_detect(mri_features, "_CV$")]
 
-## ============================================================================
-## Part 2: Clinical Homogeneity Test
-## ============================================================================
-cat("\nPart 2: Clinical Homogeneity Test\n")
+if (length(ta_features) > 0) {
+  data$Global_TA_Composite <- rowMeans(data[, ta_features, drop = FALSE], na.rm = TRUE)
+}
+if (length(cv_features) > 0) {
+  data$Global_CV_Composite <- rowMeans(data[, cv_features, drop = FALSE], na.rm = TRUE)
+}
+
+cat(sprintf("  Complete data: %d samples\n", nrow(data)))
+cat(sprintf("  Clinical features: %d\n", length(clinical_features)))
+cat(sprintf("  MRI features: %d\n", length(mri_features)))
+
+# Endotype distribution
+cat("\n  Endotype distribution:\n")
+subtype_dist <- table(data$Subtype)
+for (i in 1:length(subtype_dist)) {
+  cat(sprintf("    Subtype %s: %d (%.1f%%)\n",
+              names(subtype_dist)[i],
+              subtype_dist[i],
+              100 * subtype_dist[i] / sum(subtype_dist)))
+}
+cat("\n")
+
+# ==============================================================================
+# Helper Function: Interpret Eta-squared (Methods 2.8)
+# ==============================================================================
+interpret_eta_squared <- function(eta2) {
+  if (is.na(eta2)) return("NA")
+  if (eta2 >= 0.14) return("Large")
+  if (eta2 >= 0.06) return("Medium")
+  if (eta2 >= 0.01) return("Small")
+  return("Negligible")
+}
+
+# ==============================================================================
+# Part 2: Clinical Homogeneity Test (Methods 2.8)
+# ==============================================================================
+cat("[2/6] Clinical homogeneity test (Methods 2.8)...\n")
 
 clinical_homogeneity <- data.frame()
 
-for(feat in clinical_features) {
+for (feat in clinical_features) {
+  if (!feat %in% colnames(data)) next
+  
   formula <- paste0(feat, " ~ factor(Subtype)")
   model <- aov(as.formula(formula), data = data)
   sum_model <- summary(model)
   
   f_val <- sum_model[[1]]$`F value`[1]
   p_val <- sum_model[[1]]$`Pr(>F)`[1]
-  
   ss_between <- sum_model[[1]]$`Sum Sq`[1]
   ss_total <- sum(sum_model[[1]]$`Sum Sq`)
   eta2 <- ss_between / ss_total
@@ -60,51 +129,80 @@ for(feat in clinical_features) {
   clinical_homogeneity <- rbind(clinical_homogeneity, data.frame(
     Feature = feat,
     F_value = f_val,
-    P_value = p_val,
+    P_Raw = p_val,
     Eta_squared = eta2,
-    Significant = ifelse(p_val < 0.05, "Yes", "No")
+    Eta_Interpretation = interpret_eta_squared(eta2),
+    stringsAsFactors = FALSE
   ))
 }
 
-cat("Clinical homogeneity results:\n")
-print(clinical_homogeneity, row.names = FALSE)
+# FDR correction (Methods 2.4)
+clinical_homogeneity$P_FDR <- p.adjust(clinical_homogeneity$P_Raw, method = "fdr")
+clinical_homogeneity$Significant_FDR <- clinical_homogeneity$P_FDR < opt$fdr_threshold
 
-write.csv(clinical_homogeneity, "Clinical_Homogeneity_Results.csv", row.names = FALSE)
+cat("  Clinical homogeneity results:\n")
+for (i in 1:nrow(clinical_homogeneity)) {
+  sig_marker <- ifelse(clinical_homogeneity$Significant_FDR[i], "*", "")
+  cat(sprintf("    %s: F=%.2f, p_FDR=%.4f, η²=%.3f (%s)%s\n",
+              clinical_homogeneity$Feature[i],
+              clinical_homogeneity$F_value[i],
+              clinical_homogeneity$P_FDR[i],
+              clinical_homogeneity$Eta_squared[i],
+              clinical_homogeneity$Eta_Interpretation[i],
+              sig_marker))
+}
 
+write.csv(clinical_homogeneity, 
+          file.path(opt$output_dir, "Clinical_Homogeneity_Results.csv"), 
+          row.names = FALSE)
+
+# Clinical homogeneity plot
 p_clinical <- clinical_homogeneity %>%
-  ggplot(aes(x = reorder(Feature, Eta_squared), y = Eta_squared)) +
-  geom_bar(stat = "identity", fill = "#95B3D7", alpha = 0.8) +
-  geom_hline(yintercept = 0.01, linetype = "dashed", color = "red", size = 0.8) +
-  geom_text(aes(label = sprintf("P=%.3f", P_value)), hjust = -0.1, size = 3.5) +
+  ggplot(aes(x = reorder(Feature, Eta_squared), y = Eta_squared, 
+             fill = Significant_FDR)) +
+  geom_bar(stat = "identity", alpha = 0.8) +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "orange", size = 0.8) +
+  geom_hline(yintercept = 0.06, linetype = "dashed", color = "red", size = 0.8) +
+  geom_hline(yintercept = 0.14, linetype = "dashed", color = "darkred", size = 0.8) +
+  geom_text(aes(label = sprintf("p=%.3f", P_FDR)), hjust = -0.1, size = 3.5) +
+  scale_fill_manual(values = c("FALSE" = "#95B3D7", "TRUE" = "#C0504D"),
+                    name = "FDR < 0.05") +
   coord_flip() +
-  labs(title = "Clinical Homogeneity Across Endotypes",
-       subtitle = "No significant differences in clinical features",
-       x = "Clinical Feature", y = "Effect Size (η²)") +
+  labs(
+    title = "Clinical Homogeneity Across Endotypes (Methods 2.8)",
+    subtitle = "Dashed lines: Cohen's η² thresholds (0.01 small, 0.06 medium, 0.14 large)",
+    x = "Clinical Feature", 
+    y = "Effect Size (η²)"
+  ) +
   theme_classic(base_size = 12) +
-  theme(plot.title = element_text(face = "bold", size = 14))
+  theme(plot.title = element_text(face = "bold", size = 14),
+        legend.position = "bottom")
 
-ggsave("Figure_Clinical_Homogeneity.pdf", p_clinical, width = 10, height = 6, dpi = 300)
-ggsave("Figure_Clinical_Homogeneity.png", p_clinical, width = 10, height = 6, dpi = 300)
+ggsave(file.path(opt$output_dir, "Figure_Clinical_Homogeneity.png"), 
+       p_clinical, width = 10, height = 6, dpi = 300)
+cat("  Saved: Figure_Clinical_Homogeneity.png\n\n")
 
-## ============================================================================
-## Part 3: MRI Heterogeneity Test
-## ============================================================================
-cat("\nPart 3: MRI Heterogeneity Test\n")
+# ==============================================================================
+# Part 3: MRI Heterogeneity Test (Methods 2.4, 2.8)
+# ==============================================================================
+cat("[3/6] MRI heterogeneity test (Methods 2.4, 2.8)...\n")
 
 mri_heterogeneity <- data.frame()
 
-for(feat in mri_features) {
+for (feat in mri_features) {
+  if (!feat %in% colnames(data)) next
+  
   formula <- paste0(feat, " ~ factor(Subtype)")
   model <- aov(as.formula(formula), data = data)
   sum_model <- summary(model)
   
   f_val <- sum_model[[1]]$`F value`[1]
   p_val <- sum_model[[1]]$`Pr(>F)`[1]
-  
   ss_between <- sum_model[[1]]$`Sum Sq`[1]
   ss_total <- sum(sum_model[[1]]$`Sum Sq`)
   eta2 <- ss_between / ss_total
   
+  # Extract region and measure type
   region_name <- str_extract(feat, "^[A-Za-z]+")
   measure_type <- str_extract(feat, "[A-Z]+$")
   
@@ -113,142 +211,201 @@ for(feat in mri_features) {
     Region = region_name,
     Measure = measure_type,
     F_value = f_val,
-    P_value = p_val,
+    P_Raw = p_val,
     Eta_squared = eta2,
-    Significant = ifelse(p_val < 0.05, "Yes", "No")
+    Eta_Interpretation = interpret_eta_squared(eta2),
+    stringsAsFactors = FALSE
   ))
 }
 
-cat("MRI heterogeneity results:\n")
-print(mri_heterogeneity, row.names = FALSE)
+# FDR correction (Methods 2.4)
+mri_heterogeneity$P_FDR <- p.adjust(mri_heterogeneity$P_Raw, method = "fdr")
+mri_heterogeneity$Significant_FDR <- mri_heterogeneity$P_FDR < opt$fdr_threshold
 
-write.csv(mri_heterogeneity, "MRI_Heterogeneity_Results.csv", row.names = FALSE)
+cat("  MRI heterogeneity results:\n")
+n_sig <- sum(mri_heterogeneity$Significant_FDR)
+n_large <- sum(mri_heterogeneity$Eta_Interpretation == "Large")
+cat(sprintf("    Significant (FDR < %.2f): %d/%d\n", opt$fdr_threshold, n_sig, nrow(mri_heterogeneity)))
+cat(sprintf("    Large effect (η² ≥ 0.14): %d/%d\n", n_large, nrow(mri_heterogeneity)))
 
+write.csv(mri_heterogeneity, 
+          file.path(opt$output_dir, "MRI_Heterogeneity_Results.csv"), 
+          row.names = FALSE)
+
+# MRI heterogeneity plot
 p_mri <- mri_heterogeneity %>%
-  ggplot(aes(x = reorder(Feature, Eta_squared), y = Eta_squared, fill = Significant)) +
+  ggplot(aes(x = reorder(Feature, Eta_squared), y = Eta_squared, 
+             fill = Significant_FDR)) +
   geom_bar(stat = "identity", alpha = 0.8) +
+  geom_hline(yintercept = 0.01, linetype = "dashed", color = "orange", size = 0.8) +
+  geom_hline(yintercept = 0.06, linetype = "dashed", color = "red", size = 0.8) +
+  geom_hline(yintercept = 0.14, linetype = "dashed", color = "darkred", size = 0.8) +
   geom_text(aes(label = sprintf("%.3f", Eta_squared)), hjust = -0.1, size = 3) +
-  scale_fill_manual(values = c("No" = "#95B3D7", "Yes" = "#C0504D")) +
+  scale_fill_manual(values = c("FALSE" = "#95B3D7", "TRUE" = "#C0504D"),
+                    name = "FDR < 0.05") +
   coord_flip() +
-  labs(title = "MRI Heterogeneity Across Endotypes",
-       subtitle = "Significant differences in neuroimaging features",
-       x = "MRI Feature", y = "Effect Size (η²)") +
+  labs(
+    title = "MRI Heterogeneity Across Endotypes (Methods 2.4, 2.8)",
+    subtitle = "Dashed lines: Cohen's η² thresholds (0.01 small, 0.06 medium, 0.14 large)",
+    x = "MRI Feature", 
+    y = "Effect Size (η²)"
+  ) +
   theme_classic(base_size = 12) +
-  theme(plot.title = element_text(face = "bold", size = 14))
+  theme(plot.title = element_text(face = "bold", size = 14),
+        legend.position = "bottom")
 
-ggsave("Figure_MRI_Heterogeneity.pdf", p_mri, width = 10, height = 7, dpi = 300)
-ggsave("Figure_MRI_Heterogeneity.png", p_mri, width = 10, height = 7, dpi = 300)
+ggsave(file.path(opt$output_dir, "Figure_MRI_Heterogeneity.png"), 
+       p_mri, width = 10, height = 7, dpi = 300)
+cat("  Saved: Figure_MRI_Heterogeneity.png\n\n")
 
-## ============================================================================
-## Part 4: Stage Independence Test
-## ============================================================================
-cat("\nPart 4: Stage Independence (Adjusted for MMSE & Age)\n")
+# ==============================================================================
+# Part 4: Stage Independence Test (Methods 2.8 - ANCOVA)
+# ==============================================================================
+cat("[4/6] Stage independence test (ANCOVA, Methods 2.8)...\n")
 
 stage_independence <- data.frame()
 
-for(feat in mri_features) {
+for (feat in mri_features) {
+  if (!feat %in% colnames(data)) next
+  if (!"MMSE_Baseline" %in% colnames(data) || !"Age" %in% colnames(data)) next
+  
+  # Full model with covariates (ANCOVA)
   formula_full <- paste0(feat, " ~ factor(Subtype) + MMSE_Baseline + Age")
   model_full <- aov(as.formula(formula_full), data = data)
   sum_full <- summary(model_full)
   
+  # Unadjusted model
   formula_sub <- paste0(feat, " ~ factor(Subtype)")
   model_sub <- aov(as.formula(formula_sub), data = data)
   sum_sub <- summary(model_sub)
   
-  ss_subtype <- sum_full[[1]]$`Sum Sq`[1]
-  ss_total <- sum(sum_full[[1]]$`Sum Sq`)
-  eta2_adjusted <- ss_subtype / ss_total
+  # Adjusted eta-squared (from ANCOVA)
+  ss_subtype_adj <- sum_full[[1]]$`Sum Sq`[1]
+  ss_total_adj <- sum(sum_full[[1]]$`Sum Sq`)
+  eta2_adjusted <- ss_subtype_adj / ss_total_adj
   p_val_adjusted <- sum_full[[1]]$`Pr(>F)`[1]
   
+  # Unadjusted eta-squared
   ss_sub_only <- sum_sub[[1]]$`Sum Sq`[1]
   ss_total_sub <- sum(sum_sub[[1]]$`Sum Sq`)
   eta2_unadjusted <- ss_sub_only / ss_total_sub
+  
+  # Effect size change
+  eta2_change <- eta2_adjusted - eta2_unadjusted
+  pct_change <- 100 * eta2_change / eta2_unadjusted
   
   stage_independence <- rbind(stage_independence, data.frame(
     Feature = feat,
     Eta2_Unadjusted = eta2_unadjusted,
     Eta2_Adjusted = eta2_adjusted,
+    Eta2_Change = eta2_change,
+    Pct_Change = pct_change,
     P_Adjusted = p_val_adjusted,
-    Stage_Independent = ifelse(p_val_adjusted < 0.05, "Yes", "No")
+    Eta_Interpretation_Adj = interpret_eta_squared(eta2_adjusted),
+    stringsAsFactors = FALSE
   ))
 }
 
-cat("Stage independence results:\n")
-print(stage_independence, row.names = FALSE)
+# FDR correction for adjusted p-values
+stage_independence$P_FDR_Adjusted <- p.adjust(stage_independence$P_Adjusted, method = "fdr")
+stage_independence$Stage_Independent <- stage_independence$P_FDR_Adjusted < opt$fdr_threshold
 
-write.csv(stage_independence, "Stage_Independence_Results.csv", row.names = FALSE)
+cat("  Stage independence results:\n")
+n_independent <- sum(stage_independence$Stage_Independent)
+cat(sprintf("    Stage-independent (FDR < %.2f after adjustment): %d/%d\n", 
+            opt$fdr_threshold, n_independent, nrow(stage_independence)))
 
+write.csv(stage_independence, 
+          file.path(opt$output_dir, "Stage_Independence_Results.csv"), 
+          row.names = FALSE)
+
+# Stage independence plot
 p_stage <- stage_independence %>%
   pivot_longer(cols = c(Eta2_Unadjusted, Eta2_Adjusted),
                names_to = "Type", values_to = "Eta2") %>%
-  mutate(Type = factor(Type, levels = c("Eta2_Unadjusted", "Eta2_Adjusted"),
-                       labels = c("Unadjusted", "Adjusted for MMSE & Age"))) %>%
+  mutate(Type = factor(Type, 
+                       levels = c("Eta2_Unadjusted", "Eta2_Adjusted"),
+                       labels = c("Unadjusted", "Adjusted (MMSE + Age)"))) %>%
   ggplot(aes(x = Feature, y = Eta2, fill = Type)) +
   geom_bar(stat = "identity", position = "dodge", alpha = 0.8) +
+  geom_hline(yintercept = 0.06, linetype = "dashed", color = "red", size = 0.8) +
   scale_fill_manual(values = c("Unadjusted" = "#95B3D7",
-                               "Adjusted for MMSE & Age" = "#8064A2")) +
+                               "Adjusted (MMSE + Age)" = "#8064A2")) +
   coord_flip() +
-  labs(title = "Stage Independence of Endotype Markers",
-       subtitle = "Effect sizes before and after adjusting for disease stage",
-       x = "MRI Feature", y = "Effect Size (η²)", fill = NULL) +
+  labs(
+    title = "Stage Independence of Endotype Markers (Methods 2.8)",
+    subtitle = "ANCOVA: Effect sizes before and after adjusting for disease stage",
+    x = "MRI Feature", 
+    y = "Effect Size (η²)", 
+    fill = NULL
+  ) +
   theme_classic(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 14),
         legend.position = "bottom")
 
-ggsave("Figure_Stage_Independence.pdf", p_stage, width = 10, height = 7, dpi = 300)
-ggsave("Figure_Stage_Independence.png", p_stage, width = 10, height = 7, dpi = 300)
+ggsave(file.path(opt$output_dir, "Figure_Stage_Independence.png"), 
+       p_stage, width = 10, height = 7, dpi = 300)
+cat("  Saved: Figure_Stage_Independence.png\n\n")
 
-## ============================================================================
-## Part 4.1: Disproportionate Atrophy Analysis (Logic Gap Fix)
-## ============================================================================
-cat("\nPART 4.1: DISPROPORTIONATE ATROPHY ANALYSIS (Logic Gap Fix)\n")
-cat("Hypothesis: High-Risk subtype shows atrophy > expected for global load\n")
-cat(paste(rep("=", 78), collapse = ""), "\n", sep="")
+# ==============================================================================
+# Part 5: Disproportionate Atrophy Analysis (Methods 2.8)
+# ==============================================================================
+cat("[5/6] Disproportionate atrophy analysis (W-score residuals, Methods 2.8)...\n")
 
 disprop_stats_list <- list()
 disprop_residuals_df <- data.frame()
 
-for(feat in mri_features) {
-  # Determine global composite measure based on feature type
+for (feat in mri_features) {
+  if (!feat %in% colnames(data)) next
+  
+  # Determine global composite measure
   is_thickness <- str_detect(feat, "_TA$")
-  global_measure <- if(is_thickness) "Global_TA_Composite" else "Global_CV_Composite"
+  global_measure <- if (is_thickness && "Global_TA_Composite" %in% colnames(data)) {
+    "Global_TA_Composite"
+  } else if ("Global_CV_Composite" %in% colnames(data)) {
+    "Global_CV_Composite"
+  } else {
+    next
+  }
   
-  # Regression model to remove global atrophy, age, and gender effects
-  formula_str <- paste(feat, "~", global_measure, "+ Age + Gender")
+  # Check if Gender exists
+  if ("Gender" %in% colnames(data) && "Age" %in% colnames(data)) {
+    formula_str <- paste(feat, "~", global_measure, "+ Age + Gender")
+  } else if ("Age" %in% colnames(data)) {
+    formula_str <- paste(feat, "~", global_measure, "+ Age")
+  } else {
+    formula_str <- paste(feat, "~", global_measure)
+  }
+  
   model_resid <- lm(as.formula(formula_str), data = data)
-  
-  # Extract standardized residuals (W-score proxy)
-  # Positive = thicker/larger than expected; Negative = more atrophic than expected
   residuals_std <- rstandard(model_resid)
   
-  # Prepare data for ANOVA on residuals
+  # Test residual differences across subtypes
   temp_data <- data
   temp_data$Residual <- residuals_std
   
-  # Test residual differences across subtypes
-  anova_res <- aov(Residual ~ Subtype, data = temp_data)
+  anova_res <- aov(Residual ~ factor(Subtype), data = temp_data)
   summ <- summary(anova_res)[[1]]
   
-  # Extract statistical metrics
-  f_val <- summ["Subtype", "F value"]
-  p_val <- summ["Subtype", "Pr(>F)"]
-  ss_between <- summ["Subtype", "Sum Sq"]
+  f_val <- summ["factor(Subtype)", "F value"]
+  p_val <- summ["factor(Subtype)", "Pr(>F)"]
+  ss_between <- summ["factor(Subtype)", "Sum Sq"]
   ss_total <- sum(summ[, "Sum Sq"])
   eta_sq_resid <- ss_between / ss_total
   
-  # Save statistical results
   disprop_stats_list[[feat]] <- data.frame(
     Feature = feat,
     Global_Control = global_measure,
     F_value_Resid = f_val,
-    P_value_Resid = p_val,
+    P_Raw_Resid = p_val,
     Eta2_Resid = eta_sq_resid,
-    Significant_Topology = ifelse(p_val < 0.05, "Yes", "No")
+    Eta_Interpretation_Resid = interpret_eta_squared(eta_sq_resid),
+    stringsAsFactors = FALSE
   )
   
   # Save residual data for visualization
   feat_resids <- data.frame(
-    ID = data$ID,
+    ID = if ("ID" %in% colnames(data)) data$ID else 1:nrow(data),
     Subtype = data$Subtype,
     Feature = feat,
     Residual_W_Score = residuals_std
@@ -256,290 +413,177 @@ for(feat in mri_features) {
   disprop_residuals_df <- rbind(disprop_residuals_df, feat_resids)
 }
 
-# Combine and export statistics
+# Combine statistics
 disprop_stats <- bind_rows(disprop_stats_list)
-cat("Disproportionate atrophy analysis results:\n")
-print(disprop_stats, row.names = FALSE)
-write.csv(disprop_stats, "Disproportionate_Atrophy_Stats.csv", row.names = FALSE)
 
-# Prepare visualization data
-plot_data_residuals <- disprop_residuals_df
-plot_data_residuals$Region_Label <- str_remove_all(plot_data_residuals$Feature, "_TA|_CV|Right")
+# FDR correction
+disprop_stats$P_FDR_Resid <- p.adjust(disprop_stats$P_Raw_Resid, method = "fdr")
+disprop_stats$Significant_Topology <- disprop_stats$P_FDR_Resid < opt$fdr_threshold
 
-# Visualize disproportionate atrophy
-p_residuals <- ggplot(plot_data_residuals, aes(x = Region_Label, y = Residual_W_Score, fill = Subtype)) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
-  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-  scale_fill_manual(values = c("1" = "#95B3D7", "2" = "#8064A2", "3" = "#C0504D"),
-                    name = "Risk Subtype") +
-  labs(title = "Topological Specificity (Disproportionate Atrophy)",
-       subtitle = "Residuals after controlling for Global Atrophy, Age, and Sex\n(Negative values = Specific Atrophy)",
-       y = "Standardized Residuals (W-score proxy)",
-       x = "Brain Region") +
-  theme_classic(base_size = 12) +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        plot.title = element_text(face = "bold"))
+cat("  Disproportionate atrophy results:\n")
+n_topo_sig <- sum(disprop_stats$Significant_Topology)
+cat(sprintf("    Topologically specific (FDR < %.2f): %d/%d\n", 
+            opt$fdr_threshold, n_topo_sig, nrow(disprop_stats)))
 
-ggsave("Figure_Disproportionate_Atrophy.pdf", p_residuals, width = 10, height = 6, dpi = 300)
-ggsave("Figure_Disproportionate_Atrophy.png", p_residuals, width = 10, height = 6, dpi = 300)
-cat("✓ Disproportionate atrophy analysis completed\n\n")
+write.csv(disprop_stats, 
+          file.path(opt$output_dir, "Disproportionate_Atrophy_Stats.csv"), 
+          row.names = FALSE)
 
-## ============================================================================
-## Part 5: Brain Region to Yeo7 Network Mapping
-## ============================================================================
-cat("\nPart 5: Yeo7 Network Mapping\n")
+# Disproportionate atrophy plot
+if (nrow(disprop_residuals_df) > 0) {
+  plot_data_residuals <- disprop_residuals_df
+  plot_data_residuals$Region_Label <- str_remove_all(plot_data_residuals$Feature, "_TA|_CV|Right")
+  
+  p_residuals <- ggplot(plot_data_residuals, 
+                        aes(x = Region_Label, y = Residual_W_Score, fill = factor(Subtype))) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+    scale_fill_manual(values = c("1" = "#95B3D7", "2" = "#8064A2", "3" = "#C0504D"),
+                      name = "Subtype") +
+    labs(
+      title = "Topological Specificity (Disproportionate Atrophy, Methods 2.8)",
+      subtitle = "W-score residuals after controlling for Global Atrophy, Age, and Sex",
+      y = "Standardized Residuals (W-score)",
+      x = "Brain Region"
+    ) +
+    theme_classic(base_size = 12) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          plot.title = element_text(face = "bold"),
+          legend.position = "bottom")
+  
+  ggsave(file.path(opt$output_dir, "Figure_Disproportionate_Atrophy.png"), 
+         p_residuals, width = 10, height = 6, dpi = 300)
+  cat("  Saved: Figure_Disproportionate_Atrophy.png\n\n")
+}
 
-region_to_yeo7 <- data.frame(
-  Region_Code = c("RightParacentral", "RightParahippocampal", 
-                  "RightParsOpercularis", "RightParsOrbitalis"),
-  Region_Name = c("Right Paracentral Lobule", "Right Parahippocampal Gyrus",
-                  "Right Pars Opercularis", "Right Pars Orbitalis"),
-  Yeo7_Network_ID = c(2, 7, 6, 7),
-  Yeo7_Network_Name = c("Somatomotor Network", "Default Mode Network (DMN)",
-                        "Frontoparietal Network", "Default Mode Network (DMN)"),
-  Hemisphere = c("right", "right", "right", "right"),
-  Reference = c("Yeo et al., 2011", "Andrews-Hanna et al., 2010",
-                "Vincent et al., 2008", "Greicius et al., 2003")
+# ==============================================================================
+# Part 6: Summary Report
+# ==============================================================================
+cat("[6/6] Generating summary report...\n\n")
+
+summary_lines <- c(
+  "================================================================================",
+  "Neuroimaging Endotype Characterization Report (Methods 2.4, 2.8 Aligned)",
+  "================================================================================",
+  "",
+  sprintf("Generated: %s", Sys.time()),
+  "",
+  "Methods Requirements:",
+  sprintf("  Methods 2.4: Benjamini-Hochberg FDR correction (q < %.2f)", opt$fdr_threshold),
+  "  Methods 2.8: Eta-squared effect sizes with Cohen's criteria:",
+  "    - η² ≥ 0.01: Small effect",
+  "    - η² ≥ 0.06: Medium effect",
+  "    - η² ≥ 0.14: Large effect",
+  "  Methods 2.8: ANCOVA for stage-independent verification",
+  "  Methods 2.8: W-score residuals for disproportionate atrophy",
+  "",
+  "--------------------------------------------------------------------------------",
+  "Data Summary",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Sample size: %d", nrow(data)),
+  sprintf("  Clinical features: %d", length(clinical_features)),
+  sprintf("  MRI features: %d", length(mri_features)),
+  ""
 )
 
-cat("Region to Yeo7 network mapping:\n")
-print(region_to_yeo7[, 1:4], row.names = FALSE)
+# Endotype distribution
+for (i in 1:length(subtype_dist)) {
+  summary_lines <- c(summary_lines,
+    sprintf("  Subtype %s: %d (%.1f%%)",
+            names(subtype_dist)[i],
+            subtype_dist[i],
+            100 * subtype_dist[i] / sum(subtype_dist)))
+}
 
-write.csv(region_to_yeo7, "Region_to_Yeo7_Mapping.csv", row.names = FALSE)
-
-## ============================================================================
-## Part 6: Yeo7 Network-Level Effect Size Aggregation
-## ============================================================================
-cat("\nPart 6: Network-Level Effect Sizes\n")
-
-network_effects <- mri_heterogeneity %>%
-  left_join(region_to_yeo7, by = c("Region" = "Region_Code")) %>%
-  group_by(Yeo7_Network_ID, Yeo7_Network_Name) %>%
-  summarise(
-    Mean_Eta2 = mean(Eta_squared, na.rm = TRUE),
-    Max_Eta2 = max(Eta_squared, na.rm = TRUE),
-    Min_P = min(P_value, na.rm = TRUE),
-    N_Features = n(),
-    Features_List = paste(unique(Feature), collapse = ", "),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(Mean_Eta2))
-
-cat("Yeo7 network-level effect sizes:\n")
-print(network_effects, row.names = FALSE)
-
-write.csv(network_effects, "Yeo7_Network_Effects.csv", row.names = FALSE)
-
-p_network_bar <- network_effects %>%
-  ggplot(aes(x = reorder(Yeo7_Network_Name, Mean_Eta2), y = Mean_Eta2)) +
-  geom_bar(stat = "identity", fill = "#8064A2", alpha = 0.8) +
-  geom_text(aes(label = sprintf("η²=%.3f\nP=%.4f", Mean_Eta2, Min_P)),
-            hjust = -0.1, size = 3.5) +
-  coord_flip() +
-  labs(title = "Yeo7 Network-Level Effect Sizes",
-       subtitle = "Aggregated across all MRI features within each network",
-       x = NULL, y = "Mean Effect Size (η²)") +
-  theme_classic(base_size = 12) +
-  theme(plot.title = element_text(face = "bold", size = 14)) +
-  ylim(0, max(network_effects$Mean_Eta2) * 1.25)
-
-ggsave("Figure_Yeo7_Network_BarPlot.pdf", p_network_bar, width = 10, height = 6, dpi = 300)
-ggsave("Figure_Yeo7_Network_BarPlot.png", p_network_bar, width = 10, height = 6, dpi = 300)
-
-## ============================================================================
-## Part 7: Brain Surface Visualization
-## ============================================================================
-cat("\nPart 7: Brain Surface Visualization\n")
-
-p_brain_standard <- yeo7 %>%
-  ggplot(aes(fill = label)) +
-  geom_brain(atlas = yeo7, position = position_brain(hemi ~ side), 
-             show.legend = TRUE) +
-  scale_fill_manual(
-    values = c("7Networks_1" = "#781286", "7Networks_2" = "#4682B4",
-               "7Networks_3" = "#00A000", "7Networks_4" = "#C43AFA",
-               "7Networks_5" = "#DCDC00", "7Networks_6" = "#E69422",
-               "7Networks_7" = "#CD3E4E"),
-    na.value = "grey90",
-    name = "Yeo7 Networks",
-    labels = c("Visual", "Somatomotor", "Dorsal Attention",
-               "Ventral Attention", "Limbic", "Frontoparietal", "Default Mode")
-  ) +
-  labs(title = "Yeo7 Functional Brain Networks",
-       subtitle = "Standard 7-network parcellation") +
-  theme_void(base_size = 12) +
-  theme(plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 11, hjust = 0.5),
-        legend.position = "bottom")
-
-ggsave("Figure_Brain_Yeo7_Standard.pdf", p_brain_standard, width = 14, height = 8, dpi = 300)
-ggsave("Figure_Brain_Yeo7_Standard.png", p_brain_standard, width = 14, height = 8, dpi = 300)
-
-effect_data <- data.frame(
-  label = c("7Networks_2", "7Networks_6", "7Networks_7"),
-  value = c(0.312, 0.425, 0.389)
+summary_lines <- c(summary_lines,
+  "",
+  "--------------------------------------------------------------------------------",
+  "Clinical Homogeneity Results",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Significant differences (FDR < %.2f): %d/%d", 
+          opt$fdr_threshold, 
+          sum(clinical_homogeneity$Significant_FDR), 
+          nrow(clinical_homogeneity)),
+  sprintf("  Mean effect size: η² = %.3f", mean(clinical_homogeneity$Eta_squared)),
+  ""
 )
 
-p_brain_effect <- yeo7 %>%
-  left_join(effect_data, by = "label") %>%
-  ggplot(aes(fill = value)) +
-  geom_brain(atlas = yeo7, position = position_brain(hemi ~ side),
-             color = "white", size = 0.3, show.legend = TRUE) +
-  scale_fill_gradient(low = "#C6DBEF", high = "#08519C", na.value = "grey90",
-                      name = "Effect Size") +
-  labs(title = "Endotype Effect Sizes on Yeo7 Networks",
-       subtitle = sprintf("N=%d | Somatomotor, Frontoparietal, and DMN", nrow(data))) +
-  theme_void(base_size = 12) +
-  theme(plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 11, hjust = 0.5),
-        legend.position = "bottom")
-
-ggsave("Figure_Brain_Yeo7_EffectSizes.pdf", p_brain_effect, width = 14, height = 8, dpi = 300)
-ggsave("Figure_Brain_Yeo7_EffectSizes.png", p_brain_effect, width = 14, height = 8, dpi = 300)
-
-significant_data <- data.frame(
-  label = c("7Networks_2", "7Networks_6", "7Networks_7"),
-  network_name = c("Somatomotor", "Frontoparietal", "DMN")
+summary_lines <- c(summary_lines,
+  "--------------------------------------------------------------------------------",
+  "MRI Heterogeneity Results",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Significant differences (FDR < %.2f): %d/%d", 
+          opt$fdr_threshold, n_sig, nrow(mri_heterogeneity)),
+  sprintf("  Large effect (η² ≥ 0.14): %d/%d", n_large, nrow(mri_heterogeneity)),
+  sprintf("  Mean effect size: η² = %.3f", mean(mri_heterogeneity$Eta_squared)),
+  ""
 )
 
-p_brain_significant <- yeo7 %>%
-  left_join(significant_data, by = "label") %>%
-  ggplot(aes(fill = network_name)) +
-  geom_brain(atlas = yeo7, position = position_brain(hemi ~ side),
-             color = "white", size = 0.3, show.legend = TRUE) +
-  scale_fill_manual(values = c("Somatomotor" = "#4682B4",
-                               "Frontoparietal" = "#E69422",
-                               "DMN" = "#CD3E4E"),
-                    na.value = "grey90",
-                    name = "Significant Networks") +
-  labs(title = "Networks with Significant Endotype Differences",
-       subtitle = "Somatomotor, Frontoparietal, and Default Mode networks") +
-  theme_void(base_size = 12) +
-  theme(plot.title = element_text(size = 15, face = "bold", hjust = 0.5),
-        plot.subtitle = element_text(size = 11, hjust = 0.5),
-        legend.position = "bottom")
-
-ggsave("Figure_Brain_Yeo7_Significant.pdf", p_brain_significant, width = 14, height = 8, dpi = 300)
-ggsave("Figure_Brain_Yeo7_Significant.png", p_brain_significant, width = 14, height = 8, dpi = 300)
-
-## ============================================================================
-## Part 8: Endotype Pattern Visualization
-## ============================================================================
-cat("\nPart 8: Endotype Pattern Visualization\n")
-
-endotype_network_patterns <- data %>%
-  select(Subtype, all_of(mri_features)) %>%
-  pivot_longer(cols = all_of(mri_features), names_to = "Feature", values_to = "Value") %>%
-  mutate(Region = str_extract(Feature, "^[A-Za-z]+")) %>%
-  left_join(region_to_yeo7 %>% select(Region_Code, Yeo7_Network_Name),
-            by = c("Region" = "Region_Code")) %>%
-  group_by(Subtype, Yeo7_Network_Name) %>%
-  summarise(Mean = mean(Value, na.rm = TRUE),
-            SE = sd(Value, na.rm = TRUE) / sqrt(n()),
-            .groups = "drop")
-
-p_endotype_patterns <- endotype_network_patterns %>%
-  ggplot(aes(x = Yeo7_Network_Name, y = Mean, color = factor(Subtype), 
-             group = Subtype)) +
-  geom_line(size = 1.2, alpha = 0.8) +
-  geom_point(size = 3) +
-  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.2) +
-  scale_color_manual(values = c("1" = "#C0504D", "2" = "#8064A2", "3" = "#4BACC6"),
-                     name = "Endotype") +
-  labs(title = "Endotype-Specific Patterns Across Yeo7 Networks",
-       subtitle = "Mean MRI feature values (± SE) for each endotype",
-       x = "Yeo7 Functional Network",
-       y = "Mean MRI Value (standardized)") +
-  theme_classic(base_size = 12) +
-  theme(plot.title = element_text(face = "bold", size = 14),
-        axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "bottom")
-
-ggsave("Figure_Endotype_Network_Patterns.pdf", p_endotype_patterns, width = 12, height = 7, dpi = 300)
-ggsave("Figure_Endotype_Network_Patterns.png", p_endotype_patterns, width = 12, height = 7, dpi = 300)
-
-## ============================================================================
-## Part 9: Combined Main Figure
-## ============================================================================
-cat("\nPart 9: Combined Main Figure\n")
-
-p_combined <- (p_brain_effect) / (p_network_bar | p_endotype_patterns) +
-  plot_layout(heights = c(2, 1)) +
-  plot_annotation(
-    title = "Neuroimaging Endotype Characterization: Yeo7 Network Analysis",
-    subtitle = sprintf("Discovery Cohort (N=%d) | Clinical Homogeneity with MRI Heterogeneity", 
-                      nrow(data)),
-    tag_levels = "A",
-    theme = theme(plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
-                  plot.subtitle = element_text(size = 13, hjust = 0.5))
-  )
-
-ggsave("Figure_Combined_Main.pdf", p_combined, width = 18, height = 16, dpi = 300)
-ggsave("Figure_Combined_Main.png", p_combined, width = 18, height = 16, dpi = 300)
-
-## ============================================================================
-## Summary Report
-## ============================================================================
-cat("\n================================================================================\n")
-cat("ANALYSIS COMPLETE\n")
-cat("================================================================================\n")
-
-report <- c(
-  "NEUROIMAGING ENDOTYPE CHARACTERIZATION REPORT",
-  "==============================================",
-  "",
-  sprintf("Sample Size: %d", nrow(data)),
-  sprintf("Endotype Distribution: %s", 
-          paste(names(table(data$Subtype)), table(data$Subtype), 
-                sep = "=", collapse = ", ")),
-  "",
-  "KEY FINDINGS:",
-  "1. Clinical Homogeneity:",
-  "   - All clinical features show non-significant differences (P > 0.05)",
-  sprintf("   - Mean effect size: %.3f", mean(clinical_homogeneity$Eta_squared)),
-  "",
-  "2. MRI Heterogeneity:",
-  sprintf("   - Significant differences in %d/%d MRI features", 
-          sum(mri_heterogeneity$Significant == "Yes"), nrow(mri_heterogeneity)),
-  sprintf("   - Mean effect size: %.3f", mean(mri_heterogeneity$Eta_squared)),
-  "",
-  "3. Stage Independence:",
-  sprintf("   - %d/%d features remain significant after MMSE & Age adjustment",
-          sum(stage_independence$Stage_Independent == "Yes"), 
-          nrow(stage_independence)),
-  "",
-  "4. Disproportionate Atrophy:",
-  sprintf("   - %d/%d features show significant topological specificity (residual analysis)",
-          sum(disprop_stats$Significant_Topology == "Yes"), nrow(disprop_stats)),
-  "",
-  "5. Yeo7 Network Involvement:",
-  sprintf("   - %d networks show significant endotype differences", 
-          nrow(network_effects)),
-  sprintf("   - Strongest network: %s (η²=%.3f)", 
-          network_effects$Yeo7_Network_Name[1], network_effects$Mean_Eta2[1]),
-  "",
-  "OUTPUT FILES:",
-  "  CSV: Clinical_Homogeneity_Results.csv",
-  "  CSV: MRI_Heterogeneity_Results.csv",
-  "  CSV: Stage_Independence_Results.csv",
-  "  CSV: Disproportionate_Atrophy_Stats.csv",
-  "  CSV: Region_to_Yeo7_Mapping.csv",
-  "  CSV: Yeo7_Network_Effects.csv",
-  "  PDF/PNG: Figure_Clinical_Homogeneity",
-  "  PDF/PNG: Figure_MRI_Heterogeneity",
-  "  PDF/PNG: Figure_Stage_Independence",
-  "  PDF/PNG: Figure_Disproportionate_Atrophy",
-  "  PDF/PNG: Figure_Brain_Yeo7_Standard",
-  "  PDF/PNG: Figure_Brain_Yeo7_EffectSizes",
-  "  PDF/PNG: Figure_Brain_Yeo7_Significant",
-  "  PDF/PNG: Figure_Endotype_Network_Patterns",
-  "  PDF/PNG: Figure_Combined_Main",
-  "",
-  sprintf("Analysis completed: %s", Sys.time())
+summary_lines <- c(summary_lines,
+  "--------------------------------------------------------------------------------",
+  "Stage Independence Results (ANCOVA)",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Stage-independent features (FDR < %.2f after adjustment): %d/%d", 
+          opt$fdr_threshold, n_independent, nrow(stage_independence)),
+  ""
 )
 
-writeLines(report, "Step23_Analysis_Report.txt")
-cat(paste(report, collapse = "\n"))
-cat("\n\n================================================================================\n")
+summary_lines <- c(summary_lines,
+  "--------------------------------------------------------------------------------",
+  "Disproportionate Atrophy Results",
+  "--------------------------------------------------------------------------------",
+  sprintf("  Topologically specific (FDR < %.2f): %d/%d", 
+          opt$fdr_threshold, n_topo_sig, nrow(disprop_stats)),
+  ""
+)
+
+summary_lines <- c(summary_lines,
+  "--------------------------------------------------------------------------------",
+  "Key Findings",
+  "--------------------------------------------------------------------------------",
+  "  1. Clinical Homogeneity:",
+  sprintf("     - %s significant clinical differences across endotypes",
+          ifelse(sum(clinical_homogeneity$Significant_FDR) == 0, "No", "Some")),
+  "",
+  "  2. MRI Heterogeneity:",
+  sprintf("     - %d/%d MRI features show significant endotype differences",
+          n_sig, nrow(mri_heterogeneity)),
+  "",
+  "  3. Stage Independence:",
+  sprintf("     - %d/%d features remain significant after MMSE & Age adjustment",
+          n_independent, nrow(stage_independence)),
+  "",
+  "  4. Topological Specificity:",
+  sprintf("     - %d/%d features show disproportionate atrophy patterns",
+          n_topo_sig, nrow(disprop_stats)),
+  "",
+  "--------------------------------------------------------------------------------",
+  "Output Files",
+  "--------------------------------------------------------------------------------",
+  sprintf("  - %s/Clinical_Homogeneity_Results.csv", opt$output_dir),
+  sprintf("  - %s/MRI_Heterogeneity_Results.csv", opt$output_dir),
+  sprintf("  - %s/Stage_Independence_Results.csv", opt$output_dir),
+  sprintf("  - %s/Disproportionate_Atrophy_Stats.csv", opt$output_dir),
+  sprintf("  - %s/Figure_Clinical_Homogeneity.png", opt$output_dir),
+  sprintf("  - %s/Figure_MRI_Heterogeneity.png", opt$output_dir),
+  sprintf("  - %s/Figure_Stage_Independence.png", opt$output_dir),
+  sprintf("  - %s/Figure_Disproportionate_Atrophy.png", opt$output_dir),
+  "",
+  "================================================================================",
+  "Neuroimaging Endotype Characterization Complete",
+  "================================================================================"
+)
+
+# Write report
+report_path <- file.path(opt$output_dir, "Neuroimaging_Endotype_Report.txt")
+writeLines(summary_lines, report_path)
+
+cat(paste(summary_lines, collapse = "\n"))
+cat("\n\n")
+
+cat("============================================================\n")
+cat("Step 22: Neuroimaging Endotype Characterization Complete!\n")
+cat("============================================================\n")
+cat(sprintf("Report saved: %s\n", report_path))
 
 
