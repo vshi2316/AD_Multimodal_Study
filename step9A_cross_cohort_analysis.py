@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore")
 
 def consensus_clustering_pac(X, k, n_iter=100, subsample_frac=0.8, random_state=42):
     """
-    Implements Consensus Clustering and PAC calculation as per Methods 2.7.
+    Implements Consensus Clustering and PAC calculation as per.
     
     "Consensus matrices were visualized using hierarchical methods. 
     Proportion of ambiguous clustering (PAC) indices assessed clustering 
@@ -89,7 +89,7 @@ def consensus_clustering_pac(X, k, n_iter=100, subsample_frac=0.8, random_state=
     ambiguous_vals = flat_matrix[(flat_matrix > 0.1) & (flat_matrix < 0.9)]
     pac = len(ambiguous_vals) / len(flat_matrix) if len(flat_matrix) > 0 else 0
     
-    # Calculate sample-level stability (Methods 2.7: >0.85 indicating stable assignment)
+    # Calculate sample-level stability (>0.85 indicating stable assignment)
     sample_stability = np.max(sample_cluster_counts, axis=1) / np.sum(sample_cluster_counts, axis=1)
     sample_stability[np.isnan(sample_stability)] = 0
     
@@ -100,7 +100,7 @@ def calculate_jaccard_index(labels_true, labels_pred):
     """
     Calculates Jaccard Index by aligning clusters using Hungarian algorithm.
     
-    Methods 2.7: "Metrics included Jaccard index measuring overlap between 
+     "Metrics included Jaccard index measuring overlap between 
     original and bootstrap clustering (range: 0-1, higher indicating greater stability)"
     
     Parameters:
@@ -150,7 +150,7 @@ def calculate_eta_squared(values, labels, n_clusters):
     """
     Calculate eta-squared (effect size) for feature importance.
     
-    Methods 2.8: "Eta-squared (η²) quantifies effect sizes: between-group sum 
+     "Eta-squared (η²) quantifies effect sizes: between-group sum 
     of squares divided by total sum of squares"
     """
     grand_mean = values.mean()
@@ -169,19 +169,19 @@ def calculate_eta_squared(values, labels, n_clusters):
 def main():
     # ========== Parse Arguments ==========
     parser = argparse.ArgumentParser(
-        description="Cross-Cohort Cluster Validation (Methods 2.7 - Complete Implementation)"
+        description="Cross-Cohort Cluster Validation"
     )
     parser.add_argument(
         "--integrated_file",
         type=str,
         required=True,
-        help="Path to integrated cohort CSV file (from step7)"
+        help="Path to integrated cohort CSV file"
     )
     parser.add_argument(
         "--latent_file",
         type=str,
         required=True,
-        help="Path to latent_encoded.csv (from step8)"
+        help="Path to latent_encoded.csv"
     )
     parser.add_argument(
         "--output_dir",
@@ -193,7 +193,7 @@ def main():
         "--n_bootstrap",
         type=int,
         default=100,
-        help="Number of bootstrap iterations (default: 100, as per Methods 2.7)"
+        help="Number of bootstrap iterations (default: 100)"
     )
     parser.add_argument(
         "--n_consensus",
@@ -207,7 +207,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     
     print("=" * 80)
-    print("Step 9A: Methods-Aligned Stability Assessment".center(80))
+    print("Step 9A: Aligned Stability Assessment".center(80))
     print("(PAC, Consensus Clustering, Jaccard Index, ARI)".center(80))
     print("=" * 80)
     
@@ -272,7 +272,7 @@ def main():
 
     # ========== [3/6] Bootstrap Stability (ARI & Jaccard) ==========
     print(f"\n[3/6] Bootstrap Stability Assessment ({args.n_bootstrap} iterations)...")
-    print("  Computing ARI and Jaccard Index (Methods 2.7)...")
+    print("  Computing ARI and Jaccard Index ...")
     
     latent_cols = [col for col in vae_embeddings.columns if col.startswith('Latent_')]
     X = vae_embeddings[latent_cols].values
@@ -311,7 +311,7 @@ def main():
     print(f"    ARI: {mean_ari:.3f} ± {std_ari:.3f}")
     print(f"    Jaccard Index: {mean_jaccard:.3f} ± {std_jaccard:.3f}")
     
-    # Interpret stability (Methods 2.7)
+    # Interpret stability 
     if mean_ari > 0.8:
         ari_interpretation = "Highly Stable"
     elif mean_ari > 0.6:
@@ -327,7 +327,7 @@ def main():
         X, n_clusters, n_iter=args.n_consensus, subsample_frac=0.8, random_state=42
     )
     
-    # Sample-level stability assessment (Methods 2.7: >0.85 indicating stable)
+    # Sample-level stability assessment ( >0.85 indicating stable)
     stable_samples = np.sum(sample_stability > 0.85)
     stable_fraction = stable_samples / n_samples
     
@@ -446,7 +446,7 @@ def main():
                label=f'Stability threshold (0.85)\n{stable_fraction*100:.1f}% samples stable')
     ax.set_xlabel('Sample Stability Score')
     ax.set_ylabel('Frequency')
-    ax.set_title('Sample-Level Clustering Stability (Methods 2.7)')
+    ax.set_title('Sample-Level Clustering Stability 
     ax.legend()
     ax.grid(True, alpha=0.3)
     
@@ -464,7 +464,7 @@ def main():
     print(f"  - {validation_path}")
     print(f"  - {consensus_fig_path}")
     print(f"  - {stability_fig_path}")
-    print("\nKey Findings (Methods 2.7 Metrics):")
+    print("\nKey Findings:")
     print(f"  - Bootstrap ARI: {mean_ari:.3f} ± {std_ari:.3f} ({ari_interpretation})")
     print(f"  - Bootstrap Jaccard: {mean_jaccard:.3f} ± {std_jaccard:.3f}")
     print(f"  - PAC Score: {pac:.4f} {'(Clear structure)' if pac < 0.05 else ''}")
@@ -477,4 +477,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
