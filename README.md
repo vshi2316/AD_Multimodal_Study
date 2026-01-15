@@ -33,7 +33,7 @@ This repository implements a novel framework for identifying Alzheimer's disease
 - **Biological Interpretation**: Neuroimaging endotype characterization and clinical-MRI heterogeneity analysis
 
 **Key Features**:
-- 23-step end-to-end analysis pipeline
+- 22-step end-to-end analysis pipeline
 - Discovery cohort (ADNI) with 3-cohort external validation
 - Random-effects meta-analysis across cohorts
 - SHAP-based model interpretability
@@ -58,20 +58,18 @@ AD_Multimodal_Study/
 ├── Cohort Integration & Clustering (Steps 7-9C) - Python
 │   ├── step7_integrate_cohorts.py            # Multimodal data integration
 │   ├── step8_vae_clustering.py               # VAE deep clustering
-│   ├── step9_cross_cohort_analysis.py        # Cross-cohort validation
+│   ├── step9A_cross_cohort_analysis.py        # Cross-cohort validation
 │   ├── step9B_biomarker_validation.py        # Biomarker validation
-│   └── step9C_enrichment_analysis.py         # Pathway enrichment
+│   
 │
 ├── Statistical Analysis (Steps 10-13) - R
 │   ├── step10_differential_analysis.R        # Limma differential analysis
-│   ├── step10B_smd_analysis.R                # Standardized mean difference
 │   ├── step11_predictive_modeling.R          # Multi-algorithm ML models
 │   ├── step12_cluster_signatures.R           # Cluster signature visualization
 │   └── step13_conversion_differential.R      # Converter vs non-converter analysis
 │
 ├── Cluster Validation (Steps 14-15) - R
 │   ├── step14_consensus_clustering.R         # Consensus clustering (PAC)
-│   ├── step14B_bootstrap_validation.R        # Bootstrap stability (ARI, Jaccard)
 │   └── step15_cross_modal_validation.R       # CSF & MRI validation
 │
 ├── External Validation (Steps 16-18) - R
@@ -84,29 +82,10 @@ AD_Multimodal_Study/
 │   ├── step20_aibl_preprocessing.R           # AIBL validation preprocessing
 │   └── step21_a4_validation.R                # A4 large-sample validation
 │
-├── Biological Characterization (Steps 22-23) - R
-│   ├── step22_subtype_naming.R               # Biological nomenclature (HP/CD/TAD)
-│   └── step23_neuroimaging_endotypes.R       # Clinical-MRI heterogeneity
+├── Biological Characterization (Steps 22) - R
+│   └── step22_neuroimaging_endotypes.R       # Clinical-MRI heterogeneity
 │
-├── Integrated Scripts (Recommended)
-│   ├── step10_differential_analysis_INTEGRATED.R   # Limma + SMD combined
-│   ├── step14_cluster_validation_INTEGRATED.R      # Consensus + Bootstrap combined
-│   ├── step17_meta_analysis_NEW.R                  # Enhanced meta-analysis
-│   └── step23_neuroimaging_endotypes_GITHUB.R      # GitHub-ready endotype analysis
-│
-├── Documentation
-│   ├── README.md                             # This file
-│   ├── CODE_COMPLETENESS_ASSESSMENT.md       # Comprehensive code review
-│   ├── GITHUB_SUBMISSION_CHECKLIST.md        # Pre-submission checklist
-│   ├── INTEGRATED_SCRIPTS_SUMMARY.md         # Integration documentation
-│   └── STEP23_GITHUB_READY_NOTES.md          # Step 23 specific notes
-│
-└── Supporting Files
-    ├── requirements.txt                       # Python dependencies
-    └── ALL_STEPS_GITHUB_READY.md             # Complete file inventory
-```
 
----
 
 ## Prerequisites
 
@@ -160,7 +139,7 @@ ggplot2, pheatmap, patchwork, RColorBrewer, ggrepel
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/AD_Multimodal_Study.git
+git clone https://github.com/vshi2316/AD_Multimodal_Study.git
 cd AD_Multimodal_Study
 ```
 
@@ -267,7 +246,7 @@ python step6_create_outcome.py
 ```bash
 python step7_integrate_cohorts.py
 python step8_vae_clustering.py
-python step9_cross_cohort_analysis.py
+python step9A_cross_cohort_analysis.py
 python step9B_biomarker_validation.py
 ```
 
@@ -346,54 +325,14 @@ source("step21_a4_validation.R")
 
 #### Phase 7: Biological Characterization (R)
 
-```R
-# Subtype biological naming
-source("step22_subtype_naming.R")
 
-# Neuroimaging endotypes (use GitHub version)
-source("step23_neuroimaging_endotypes_GITHUB.R")
+# Neuroimaging endotypes 
+source("step22_neuroimaging_endotypes_GITHUB.R")
 ```
 
 **Output**:
 - Subtype naming tables (HP, CD, TAD)
 - Clinical-MRI heterogeneity analysis
-
----
-
-## Output Files
-
-### Key Output Categories
-
-#### 1. Cluster Results
-- `cluster_results.csv`: Final cluster assignments
-- `VAE_latent_embeddings.csv`: Latent space representations
-- `Final_Consensus_Clusters_K3.csv`: Consensus clustering results
-
-#### 2. Differential Analysis
-- `DiffExpr_Clinical_All.csv`: All clinical features
-- `DiffExpr_sMRI_Significant.csv`: Significant MRI features
-- `SMD_All_Features.csv`: Standardized mean differences
-
-#### 3. Predictive Models
-- `Model_Performance_Comparison.csv`: Multi-algorithm performance
-- `ADNI_Classifier.rds`: Trained random forest model
-- `SHAP_Feature_Importance.csv`: Feature importance rankings
-
-#### 4. Validation Metrics
-- `Bootstrap_Stability_Summary.csv`: ARI, Jaccard indices
-- `External_Validation_Performance.csv`: AIBL, HABS, A4 AUC
-- `Meta_Analysis_Results.csv`: Pooled effect sizes
-
-#### 5. Visualizations (300 DPI)
-- `Volcano_*.png`: Volcano plots for each modality
-- `Heatmap_*.png`: Clustered heatmaps
-- `Figure_Main_Combined.pdf`: 4-panel endotype characterization
-- `Fig1_Forest_Plot.png`: Meta-analysis forest plot
-
-#### 6. Biological Characterization
-- `Subtype_Naming_Tables.csv`: HP/CD/TAD nomenclature
-- `Clinical_Homogeneity_Complete.csv`: Clinical feature analysis
-- `MRI_Heterogeneity_Complete.csv`: MRI feature analysis
 
 ---
 
@@ -414,7 +353,7 @@ source("step14_cluster_validation_INTEGRATED.R")
 source("step17_meta_analysis_NEW.R")
 
 # GitHub-ready endotype analysis
-source("step23_neuroimaging_endotypes_GITHUB.R")
+source("step22_neuroimaging_endotypes_GITHUB.R")
 ```
 
 ### Option 2: Parallel Processing
@@ -482,149 +421,3 @@ RUN pip3 install -r requirements.txt
 ```
 
 ---
-
-## Troubleshooting
-
-### Common Issues
-
-**Issue 1: Missing input files**
-```
-Error: File 'cluster_results.csv' not found
-```
-**Solution**: Ensure you run preprocessing steps (1-9) before analysis steps (10-23)
-
-**Issue 2: Package installation errors**
-```
-Error: package 'limma' is not available
-```
-**Solution**: Install from Bioconductor:
-```R
-BiocManager::install("limma")
-```
-
-**Issue 3: Memory errors in VAE clustering**
-```
-MemoryError: Unable to allocate array
-```
-**Solution**: Reduce batch size or use fewer features in `step8_vae_clustering.py`
-
-**Issue 4: Convergence warnings in meta-analysis**
-```
-Warning: Egger test unreliable with < 5 studies
-```
-**Solution**: This is expected with 3 cohorts; interpret cautiously
-
----
-
-## Performance Benchmarks
-
-Typical runtime on a standard workstation (16GB RAM, 8-core CPU):
-
-| Phase | Steps | Time | Memory |
-|-------|-------|------|--------|
-| Preprocessing | 1-6 | ~10 min | < 2GB |
-| VAE Clustering | 7-8 | ~30 min | 4-8GB |
-| Statistical Analysis | 10-13 | ~15 min | < 4GB |
-| Validation | 14-16 | ~45 min | < 4GB |
-| Meta-Analysis | 17-18 | ~5 min | < 2GB |
-| Discovery-Validation | 19-21 | ~20 min | < 4GB |
-| Characterization | 22-23 | ~10 min | < 2GB |
-| **Total** | **1-23** | **~2.5 hrs** | **< 8GB** |
-
----
-
-## Contributing
-
-We welcome contributions! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/YourFeature`)
-3. Commit changes (`git commit -m 'Add YourFeature'`)
-4. Push to branch (`git push origin feature/YourFeature`)
-5. Open a Pull Request
-
-### Code Standards
-
-- Python: Follow PEP 8 style guide
-- R: Follow tidyverse style guide
-- All comments in English
-- Include docstrings/roxygen documentation
-- Add unit tests where applicable
-
----
-
-## Citation
-
-If you use this code in your research, please cite:
-
-```bibtex
-@article{ADMultimodalSubtypes2025,
-  title={Multimodal Deep Phenotyping Reveals Biologically Distinct Alzheimer's Disease Subtypes},
-  author={Your Name and Collaborators},
-  journal={Journal Name},
-  year={2025},
-  volume={XX},
-  pages={XXX-XXX},
-  doi={10.XXXX/XXXXX}
-}
-```
-
-**Code Repository**:
-```bibtex
-@software{ADMultimodalCode2025,
-  title={AD Multimodal Subtype Discovery Pipeline},
-  author={Your Name},
-  year={2025},
-  publisher={GitHub},
-  url={https://github.com/YOUR_USERNAME/AD_Multimodal_Study}
-}
-```
-
----
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## Acknowledgments
-
-- **ADNI**: Alzheimer's Disease Neuroimaging Initiative
-- **AIBL**: Australian Imaging, Biomarker & Lifestyle Flagship Study
-- **HABS**: Harvard Aging Brain Study
-- **A4**: Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease Study
-
----
-
-## Contact
-
-For questions or collaboration inquiries:
-
-- **Email**: your.email@institution.edu
-- **Issues**: Please use the [GitHub Issues](https://github.com/YOUR_USERNAME/AD_Multimodal_Study/issues) page
-- **Discussions**: Join our [GitHub Discussions](https://github.com/YOUR_USERNAME/AD_Multimodal_Study/discussions)
-
----
-
-## Version History
-
-- **v1.0.0** (December 2025): Initial public release
-  - 23-step complete pipeline
-  - Integrated scripts for key analyses
-  - Comprehensive documentation
-  - GitHub-ready, SCI journal compliant
-
----
-
-## Project Status
-
-🟢 **Active Development** - This repository is actively maintained and updated.
-
-**Last Updated**: December 2025  
-**Status**: Production-ready, validated across 4 independent cohorts  
-**Code Quality**: ✅ GitHub-ready, ✅ SCI journal compliant, ✅ No Chinese characters
-
----
-
-**⭐ If you find this repository useful, please consider starring it!**
