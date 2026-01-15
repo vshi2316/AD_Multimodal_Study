@@ -77,15 +77,19 @@ clinical_merged = diag_features
 for df in [adas_features, cdr_features, faq_features, mmse_features, demo_features, gds_features]:
     clinical_merged = pd.merge(clinical_merged, df, on='PTID', how='outer')
 
-## Impute missing values using MICE
+print(f"Pre-imputation missing values:")
+print(clinical_merged.isnull().sum())
+
+## Impute missing values using MICE (15 iterations as per Methods)
 ptid = clinical_merged['PTID']
 features = clinical_merged.drop(columns=['PTID'])
 
-imputer = IterativeImputer(max_iter=10, random_state=42)
+imputer = IterativeImputer(max_iter=15, random_state=42)
 features_imputed = imputer.fit_transform(features)
 features_imputed_df = pd.DataFrame(features_imputed, columns=features.columns, index=features.index)
 
-clinical_imputed = pd.concat([ptid.reset_index(drop=True), features_imputed_df.reset_index(drop=True)], axis=1)
+clinical_imputed = pd.concat([ptid.reset_index(drop=True), 
+                               features_imputed_df.reset_index(drop=True)], axis=1)
 
 ## Standardize continuous variables
 categorical_cols = ['DIAGNOSIS', 'SEX']
@@ -100,3 +104,7 @@ final_cols = ['ID'] + [col for col in clinical_final.columns if col != 'ID']
 clinical_final = clinical_final[final_cols]
 
 clinical_final.to_csv("Clinical_data.csv", index=False)
+print(f"\nClinical preprocessing complete:")
+print(f"- Final sample size: {len(clinical_final)}")
+print(f"- Features: {len(clinical_final.columns)-1}")
+print(f"- Post-imputation missing: {clinical_final.isnull().sum().sum()}")
