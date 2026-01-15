@@ -26,7 +26,7 @@ def calculate_cohens_d(group1, group2):
     """
     Calculate Cohen's d effect size.
     
-    Methods 2.8: "requiring |SMD| > 0.5 for clinical meaningfulness"
+     "requiring |SMD| > 0.5 for clinical meaningfulness"
     
     Interpretation:
     - |d| < 0.2: Negligible
@@ -64,7 +64,7 @@ def calculate_eta_squared(groups):
     """
     Calculate eta-squared for ANOVA-like effect size.
     
-    Methods 2.8: "Eta-squared (η²) quantifies effect sizes: between-group sum 
+   "Eta-squared (η²) quantifies effect sizes: between-group sum 
     of squares divided by total sum of squares, with 0.01, 0.06, and 0.14 
     representing small, medium, and significant effects per Cohen's criteria"
     """
@@ -97,13 +97,13 @@ def interpret_eta_squared(eta_sq):
 def main():
     # ========== Parse Arguments ==========
     parser = argparse.ArgumentParser(
-        description="Biomarker Validation with FDR Correction (Methods 2.4/2.8)"
+        description="Biomarker Validation with FDR Correction )"
     )
     parser.add_argument(
         "--cluster_file",
         type=str,
         required=True,
-        help="Path to cluster_results.csv (from step8)"
+        help="Path to cluster_results.csv "
     )
     parser.add_argument(
         "--integrated_file",
@@ -133,7 +133,7 @@ def main():
         "--fdr_alpha",
         type=float,
         default=0.05,
-        help="FDR significance threshold (default: 0.05, as per Methods 2.8)"
+        help="FDR significance threshold (default: 0.05, as per)"
     )
     args = parser.parse_args()
     
@@ -141,16 +141,11 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     
     print("=" * 90)
-    print("Step 9B: Biomarker Validation with FDR Correction (Methods 2.4/2.8)".center(90))
+    print("Step 9B: Biomarker Validation with FDR Correction ".center(90))
     print("=" * 90)
 
     # ========== [1/7] Load Data ==========
     print("\n[1/7] Loading data...")
-    
-    if not os.path.exists(args.cluster_file):
-        raise FileNotFoundError(f"Cluster file not found: {args.cluster_file}")
-    if not os.path.exists(args.integrated_file):
-        raise FileNotFoundError(f"Integrated file not found: {args.integrated_file}")
     
     # Load cluster results
     cluster_results = pd.read_csv(args.cluster_file)
@@ -217,7 +212,7 @@ def main():
     for col in at_features:
         at_data[col] = at_data[col].fillna(at_data[col].median())
     
-    # PCA to generate composite AT score (Methods 2.4)
+    # PCA to generate composite AT score 
     scaler = StandardScaler()
     pca = PCA(n_components=1)
     at_score = pca.fit_transform(scaler.fit_transform(at_data.loc[valid_idx]))
@@ -228,7 +223,7 @@ def main():
     
     # ========== [4/7] Statistical Tests with FDR Correction ==========
     print("\n[4/7] Statistical Testing with Benjamini-Hochberg FDR Correction...")
-    print(f"  FDR threshold: q < {args.fdr_alpha} (Methods 2.8)")
+    print(f"  FDR threshold: q < {args.fdr_alpha} ")
     
     data_valid = data[data['AT_Score'].notna()].copy()
     subtypes = sorted(data_valid['Subtype'].unique())
@@ -247,7 +242,7 @@ def main():
     else:
         print("    ⚠ No significant global difference")
 
-    # Pairwise comparisons with FDR correction (Methods 2.8)
+    # Pairwise comparisons with FDR correction 
     print(f"\n  Pairwise Comparisons (Mann-Whitney U + FDR):")
     
     pairwise_results = []
@@ -277,7 +272,7 @@ def main():
         })
         p_values_raw.append(p_raw)
     
-    # Apply Benjamini-Hochberg FDR correction (CRITICAL - Methods 2.8)
+    # Apply Benjamini-Hochberg FDR correction 
     reject, p_adj, _, _ = multipletests(p_values_raw, alpha=args.fdr_alpha, method='fdr_bh')
     
     # Update results with FDR-corrected p-values
@@ -344,7 +339,7 @@ def main():
         else:
             print("  ⚠ No significant association detected")
         
-        # AUC for prognostic value (Methods 2.5)
+        # AUC for prognostic value 
         if data_valid['AD_Conversion'].nunique() > 1:
             auc_at = roc_auc_score(data_valid['AD_Conversion'], data_valid['AT_Score'])
             print(f"\n  Prognostic Value:")
@@ -526,7 +521,7 @@ def main():
     if auc_at is not None:
         print(f"  - AT Score AUC: {auc_at:.3f}")
     
-    print("\nMethods 2.8 Compliance:")
+    print("\n Compliance:")
     print(f"  ✓ Benjamini-Hochberg FDR correction applied (q < {args.fdr_alpha})")
     print(f"  ✓ Cohen's d effect sizes calculated")
     print(f"  ✓ Clinical meaningfulness threshold (|SMD| > 0.5) applied")
@@ -536,3 +531,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
