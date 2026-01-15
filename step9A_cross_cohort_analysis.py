@@ -214,11 +214,6 @@ def main():
     # ========== [1/6] Load Data ==========
     print("\n[1/6] Loading data...")
     
-    if not os.path.exists(args.integrated_file):
-        raise FileNotFoundError(f"Integrated file not found: {args.integrated_file}")
-    if not os.path.exists(args.latent_file):
-        raise FileNotFoundError(f"Latent file not found: {args.latent_file}")
-    
     cohort_a = pd.read_csv(args.integrated_file)
     vae_embeddings = pd.read_csv(args.latent_file)
     
@@ -482,3 +477,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
