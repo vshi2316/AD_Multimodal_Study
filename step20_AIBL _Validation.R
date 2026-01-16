@@ -24,9 +24,9 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--n_impute"), type = "integer", default = 5,
-              help = "Number of MICE imputations (Methods 2.9: 5) [default: %default]"),
+              help = "Number of MICE imputations "),
   make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
-              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]"),
+              help = "FDR significance threshold ( q < 0.05) "),
   make_option(c("--min_followup"), type = "numeric", default = 0.5,
               help = "Minimum follow-up years [default: %default]")
 )
@@ -133,9 +133,9 @@ if (length(missing_features) > 0 && length(missing_features) <= 10) {
 }
 
 # ==============================================================================
-# Part 3: MICE Multiple Imputation (Methods 2.9)
+# Part 3: MICE Multiple Imputation 
 # ==============================================================================
-cat(sprintf("\n[3/5] MICE multiple imputation (%d datasets, Methods 2.9)...\n", opt$n_impute))
+cat(sprintf("\n[3/5] MICE multiple imputation (%d datasets)...\n", opt$n_impute))
 
 # Prepare data for imputation
 aibl_predict <- aibl_analysis %>%
@@ -219,9 +219,9 @@ write.csv(aibl_with_subtype,
           row.names = FALSE)
 
 # ==============================================================================
-# Part 5: Survival Analysis (Methods 2.4, 2.5)
+# Part 5: Survival Analysis 
 # ==============================================================================
-cat("\n[5/5] Survival analysis (Methods 2.4, 2.5)...\n")
+cat("\n[5/5] Survival analysis ...\n")
 
 survival_data <- aibl_with_subtype %>%
   filter(!is.na(Followup_Years), !is.na(AD_Conversion), !is.na(Predicted_Subtype)) %>%
@@ -256,7 +256,7 @@ if (n_samples >= 20 && n_events >= 5) {
     risk.table.col = "strata",
     palette = c("#E41A1C", "#377EB8", "#4DAF4A")[1:length(unique(survival_data$Subtype))],
     title = sprintf("AIBL Cohort (n=%d, %d events)", n_samples, n_events),
-    subtitle = "External Validation (Methods 2.5)",
+    subtitle = "External Validation ",
     xlab = "Time (Years)",
     ylab = "Event-Free Survival",
     legend.title = "Subtype",
@@ -296,11 +296,11 @@ if (n_samples >= 20 && n_events >= 5) {
     stringsAsFactors = FALSE
   )
   
-  # FDR correction (Methods 2.4)
+  # FDR correction 
   cox_results$P_FDR <- p.adjust(cox_results$P_Raw, method = "fdr")
   cox_results$Significant_FDR <- cox_results$P_FDR < opt$fdr_threshold
   
-  cat("\n  Cox Regression Results (Methods 2.4):\n")
+  cat("\n  Cox Regression Results :\n")
   for (i in 1:nrow(cox_results)) {
     sig_marker <- ifelse(cox_results$Significant_FDR[i], "*", "")
     cat(sprintf("    %s: HR=%.2f (95%% CI: %.2f-%.2f), p_FDR=%.4f%s\n",
@@ -316,7 +316,7 @@ if (n_samples >= 20 && n_events >= 5) {
             file.path(opt$output_dir, "AIBL_Cox_Results.csv"), 
             row.names = FALSE)
   
-  # AUC calculation (Methods 2.5)
+  # AUC calculation
   if (n_events >= 10) {
     # Create risk score from Cox model
     survival_data$Risk_Score <- predict(cox_model, type = "risk")
@@ -357,16 +357,10 @@ cat("\n")
 
 summary_lines <- c(
   "================================================================================",
-  "AIBL External Validation Report (Methods 2.4, 2.5, 2.9 Aligned)",
+  "AIBL External Validation Report ",
   "================================================================================",
   "",
   sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods Requirements:",
-  sprintf("  Methods 2.5: Subtype assignment using ADNI-trained classifier"),
-  sprintf("  Methods 2.9: MICE multiple imputation (%d datasets)", opt$n_impute),
-  sprintf("  Methods 2.4: Benjamini-Hochberg FDR correction (q < %.2f)", opt$fdr_threshold),
-  "",
   "--------------------------------------------------------------------------------",
   "Data Summary",
   "--------------------------------------------------------------------------------",
@@ -431,3 +425,4 @@ cat("============================================================\n")
 cat("Step 20: AIBL External Validation Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
+
