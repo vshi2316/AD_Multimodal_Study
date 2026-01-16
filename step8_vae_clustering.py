@@ -266,7 +266,7 @@ def encode_data(model, X, device, batch_size=64):
 def main():
     # ========== Parse Arguments ==========
     parser = argparse.ArgumentParser(
-        description="Multi-modal VAE Clustering for AD Subtyping (PyTorch, Methods-aligned)"
+        description="Multi-modal VAE Clustering for AD Subtyping (PyTorch)"
     )
     parser.add_argument(
         "--input_file", 
@@ -351,12 +351,12 @@ def main():
     df["APOE_VAR"] = _safe_numeric(df["APOE_VAR"])
     df["AD_Conversion"] = _safe_numeric(df["AD_Conversion"])
     
-    # Exclude >20% missing baseline data (Methods requirement)
+    # Exclude >20% missing baseline data 
     baseline_cols = ["AGE", "SEX", "MMSE", "CSF_PTAU181", "CSF_ABETA42_ABETA40_RATIO", "APOE_VAR"]
     miss_frac = df[baseline_cols].isna().mean(axis=1)
     excluded_ids = df.loc[miss_frac > 0.2, "ID"].tolist()
     if len(excluded_ids) > 0:
-        print(f"  ℹ Excluding {len(excluded_ids)} participants with >20% missing baseline data (Methods).")
+        print(f"  ℹ Excluding {len(excluded_ids)} participants with >20% missing baseline data .")
     df = df[miss_frac <= 0.2].reset_index(drop=True)
     
     n_samples = len(df)
@@ -734,10 +734,9 @@ def main():
             count = int(np.sum(cluster_labels == i))
             f.write(f"  Cluster {i}: {count} ({count/n_samples*100:.1f}%)\n")
         f.write("\nInterpretation:\n")
-        f.write("- This implements a Methods-aligned 6-domain beta-VAE (β annealing + early stopping) using PyTorch 1.12.0.\n")
         f.write("- Continuous domains are z-score standardized using training-set parameters to prevent leakage.\n")
         f.write("- Categorical domains (SEX/APOE) are one-hot encoded and reconstructed using cross-entropy loss.\n")
-        f.write("- The model architecture matches Methods Section 2.3 of the manuscript.\n")
+
     
     print("\n" + "=" * 70)
     print("VAE Clustering Completed!".center(70))
@@ -750,3 +749,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
