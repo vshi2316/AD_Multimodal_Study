@@ -36,7 +36,7 @@ sns.set_style("whitegrid")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='AI Prediction with Frozen Pipeline Strategy (Methods 2.6)'
+        description='AI Prediction with Frozen Pipeline Strategy'
     )
     parser.add_argument('--test_file', type=str, 
                         default='./AI_vs_Clinician_Test/independent_test_set.csv',
@@ -48,9 +48,9 @@ def parse_args():
                         default='./AI_vs_Clinician_Test',
                         help='Output directory')
     parser.add_argument('--n_bootstrap', type=int, default=2000,
-                        help='Number of bootstrap iterations for CI (Methods 2.9: 2000)')
+                        help='Number of bootstrap iterations for CI ')
     parser.add_argument('--mice_iterations', type=int, default=15,
-                        help='MICE imputation iterations (Methods 2.6: 15)')
+                        help='MICE imputation iterations ')
     parser.add_argument('--kpca_components', type=int, default=5,
                         help='KernelPCA components')
     parser.add_argument('--high_threshold', type=float, default=0.70,
@@ -64,7 +64,7 @@ def parse_args():
 
 def hosmer_lemeshow_test(y_true, y_prob, n_groups=10):
     """
-    Hosmer-Lemeshow goodness-of-fit test (Methods 2.9).
+    Hosmer-Lemeshow goodness-of-fit test.
     P-value > 0.05 indicates adequate calibration.
     """
     df = pd.DataFrame({'y_true': y_true, 'y_prob': y_prob})
@@ -90,7 +90,7 @@ def hosmer_lemeshow_test(y_true, y_prob, n_groups=10):
 
 def bootstrap_auc_ci(y_true, y_prob, n_bootstrap=2000, alpha=0.05, seed=42):
     """
-    Bootstrap confidence interval for AUC (Methods 2.9: 2000 iterations).
+    Bootstrap confidence interval for AUC .
     """
     np.random.seed(seed)
     n = len(y_true)
@@ -335,7 +335,7 @@ def main():
     print(f"Training set shape: {X_train_selected.shape}")
     print(f"Test set shape: {X_test_selected.shape}")
     
-    # Define classifiers (Methods 2.6)
+    # Define classifiers 
     clf_svm = SVC(kernel='rbf', C=5.0, gamma='scale', probability=True, 
                   class_weight='balanced', random_state=args.seed)
     clf_gbm = HistGradientBoostingClassifier(
@@ -349,7 +349,7 @@ def main():
         max_features='sqrt', random_state=args.seed
     )
     
-    # Ensemble with 3:2:1 weights (Methods 2.6)
+    # Ensemble with 3:2:1 weights 
     ensemble = VotingClassifier(
         estimators=[('svm', clf_svm), ('gbm', clf_gbm), ('rf', clf_rf)],
         voting='soft',
@@ -414,9 +414,9 @@ def main():
     print(f"Risk thresholds: High >= {args.high_threshold}, Medium >= {args.low_threshold}")
     
     # =========================================================================
-    # PHASE 9: Performance Evaluation (Methods 2.9)
+    # PHASE 9: Performance Evaluation 
     # =========================================================================
-    print("\n[PHASE 9] Performance Evaluation (Methods 2.9)")
+    print("\n[PHASE 9] Performance Evaluation ")
     print("-" * 70)
     
     y_true = y_test
@@ -436,15 +436,15 @@ def main():
     ppv = tp / (tp + fp) if (tp + fp) > 0 else 0
     npv = tn / (tn + fn) if (tn + fn) > 0 else 0
     
-    # Brier Score (Methods 2.9)
+    # Brier Score 
     brier = brier_score_loss(y_true, y_pred_prob)
     
-    # Bootstrap AUC CI (Methods 2.9: 2000 iterations)
+    # Bootstrap AUC CI
     print(f"\nCalculating bootstrap AUC CI ({args.n_bootstrap} iterations)...")
     auc_results = bootstrap_auc_ci(y_true, y_pred_prob, n_bootstrap=args.n_bootstrap, seed=args.seed)
     auc_score = auc_results['auc']
     
-    # Hosmer-Lemeshow test (Methods 2.9)
+    # Hosmer-Lemeshow test 
     print("Performing Hosmer-Lemeshow calibration test...")
     hl_test = hosmer_lemeshow_test(y_true, y_pred_prob)
     
@@ -596,9 +596,6 @@ def main():
         "VAE Risk Stratification Model - Evaluation Report",
         "=" * 60,
         "",
-        "METHODS COMPLIANCE:",
-        "",
-        "Methods 2.6 - Frozen Pipeline Strategy:",
         f"  ✓ MICE imputation: {args.mice_iterations} iterations (fitted on training set)",
         "  ✓ StandardScaler: fitted on training set",
         f"  ✓ KernelPCA (RBF): {args.kpca_components} components (fitted on training set)",
@@ -607,7 +604,6 @@ def main():
         "  ✓ Borderline-SMOTE: applied within training folds",
         "  ✓ Youden's J: threshold optimization on training set",
         "",
-        "Methods 2.9 - Statistical Analysis:",
         f"  ✓ Bootstrap AUC CI: {args.n_bootstrap} iterations",
         "  ✓ Hosmer-Lemeshow calibration test",
         "  ✓ Brier score calculation",
@@ -673,11 +669,6 @@ def main():
     print("\n" + "=" * 70)
     print("Step 2 Complete")
     print("=" * 70)
-    print("\nMethods Compliance Summary:")
-    print("  ✓ Methods 2.6: Frozen pipeline strategy implemented")
-    print(f"  ✓ Methods 2.9: Bootstrap CI ({args.n_bootstrap} iterations)")
-    print("  ✓ Methods 2.9: Hosmer-Lemeshow calibration test")
-    print("  ✓ Methods 2.9: Brier score calculated")
     print("\nOutput files:")
     print(f"  - {output_file}")
     print(f"  - {report_file}")
@@ -686,3 +677,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
