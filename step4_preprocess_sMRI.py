@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Structural MRI Preprocessing (Methods 2.2) - No Premature Standardization'
+        description='Structural MRI Preprocessing - No Premature Standardization'
     )
     parser.add_argument('--input_file', type=str,
                         default='./ADNI_Raw_Data/MRI/FreeSurfer_sMRI.csv',
@@ -24,7 +24,7 @@ def parse_args():
                         default='./processed_data',
                         help='Output directory')
     parser.add_argument('--icv_correction', action='store_true', default=True,
-                        help='Apply ICV correction (Methods 2.2)')
+                        help='Apply ICV correction ')
     parser.add_argument('--log_transform', action='store_true', default=True,
                         help='Apply log transformation for normality')
     return parser.parse_args()
@@ -71,10 +71,6 @@ def apply_icv_correction(df, feature_cols, icv_col):
     """
     Apply ICV correction to volumetric features.
     
-    Methods 2.2: ICV correction for head size normalization
-    NOTE: This is a within-subject correction, not population-based,
-          so it does NOT cause data leakage.
-    
     Args:
         df: DataFrame with MRI features
         feature_cols: List of feature columns to correct
@@ -104,14 +100,6 @@ def preprocess_smri(input_file, output_file, output_dir, icv_correction=True, lo
     """
     Main preprocessing function for structural MRI data.
     
-    Methods 2.2 Implementation:
-    - Load FreeSurfer-derived regional volumes
-    - Extract baseline visits
-    - Select AD-relevant brain regions
-    - Apply ICV correction (within-subject, no leakage)
-    - Apply log transformation (monotonic, no leakage)
-    - OUTPUT WITHOUT Z-SCORE STANDARDIZATION (deferred to Step 7)
-    
     Args:
         input_file: Path to input CSV
         output_file: Output file path
@@ -119,9 +107,6 @@ def preprocess_smri(input_file, output_file, output_dir, icv_correction=True, lo
         icv_correction: Whether to apply ICV correction
         log_transform: Whether to apply log transformation
     """
-    print("=" * 70)
-    print("Step 4: Structural MRI Preprocessing (Methods 2.2)")
-    print("CORRECTED: No premature standardization (deferred to Step 7)")
     print("=" * 70)
     
     # Create output directory
@@ -138,7 +123,7 @@ def preprocess_smri(input_file, output_file, output_dir, icv_correction=True, lo
     smri_baseline = extract_baseline(smri_raw)
     print(f"  Baseline records: {len(smri_baseline)}")
     
-    # Select AD-relevant brain regions (Methods 2.2)
+    # Select AD-relevant brain regions 
     print("\n[3/6] Selecting AD-relevant brain regions...")
     feature_patterns = {
         'Hippocampus': ['hippocampus', 'hipp'],
@@ -174,9 +159,9 @@ def preprocess_smri(input_file, output_file, output_dir, icv_correction=True, lo
     smri_features = smri_baseline[[id_col] + available_features].copy()
     smri_features.rename(columns={id_col: 'ID'}, inplace=True)
     
-    # ICV correction (Methods 2.2) - within-subject, no leakage
+    # ICV correction
     if icv_correction:
-        print("\n[4/6] Applying ICV correction (Methods 2.2)...")
+        print("\n[4/6] Applying ICV correction...")
         print("  NOTE: ICV correction is within-subject, does not cause data leakage")
         icv_col = find_icv_column(smri_features)
         if icv_col:
@@ -237,12 +222,6 @@ def preprocess_smri(input_file, output_file, output_dir, icv_correction=True, lo
     print(f"  Total subjects: {len(smri_features)}")
     print(f"  Total features: {len(feature_cols)}")
     
-    print("\n" + "-" * 70)
-    print("NOTE: Output contains ICV-corrected, log-transformed values")
-    print("Z-score standardization will be applied in Step 7 after train/test split")
-    print("This ensures Methods 2.3 compliance: 'parameters derived exclusively from training set'")
-    print("-" * 70)
-    
     print("\n" + "=" * 70)
     print("Step 4: sMRI Preprocessing Complete")
     print("=" * 70)
@@ -264,3 +243,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
