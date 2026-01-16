@@ -20,9 +20,9 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
-              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]"),
+              help = "FDR significance threshold ( q < 0.05) [default: %default]"),
   make_option(c("--smd_threshold"), type = "numeric", default = 0.5,
-              help = "SMD clinical meaningfulness threshold (Methods 2.4: |SMD| > 0.5) [default: %default]")
+              help = "SMD clinical meaningfulness threshold (|SMD| > 0.5) [default: %default]")
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -53,7 +53,7 @@ calculate_eta_squared <- function(values, groups) {
   
   eta_sq <- ss_between / ss_total
   
-  # Cohen's criteria (Methods 2.8)
+  # Cohen's criteria 
   if (eta_sq >= 0.14) {
     interpretation <- "Large"
   } else if (eta_sq >= 0.06) {
@@ -68,7 +68,6 @@ calculate_eta_squared <- function(values, groups) {
 }
 
 #' Calculate pairwise Cohen's d (SMD)
-#' Methods 2.4: "|SMD| > 0.5 for clinical meaningfulness"
 calculate_pairwise_smd <- function(values, groups) {
   groups <- factor(groups)
   levels_g <- levels(groups)
@@ -221,10 +220,10 @@ if (!is.null(available_csf) && length(available_csf) >= 1) {
         test_used <- "Kruskal-Wallis"
       }
       
-      # Eta-squared (Methods 2.8)
+      # Eta-squared 
       eta_result <- calculate_eta_squared(test_data[[biomarker]], test_data$Subtype)
       
-      # Pairwise SMD (Methods 2.4)
+      # Pairwise SMD 
       smd_results <- calculate_pairwise_smd(test_data[[biomarker]], test_data$Subtype)
       max_smd <- if (!is.null(smd_results) && nrow(smd_results) > 0) {
         max(abs(smd_results$Cohen_d), na.rm = TRUE)
@@ -246,11 +245,11 @@ if (!is.null(available_csf) && length(available_csf) >= 1) {
       ))
     }
     
-    # FDR correction (Methods 2.4)
+    # FDR correction
     csf_results$P_FDR <- p.adjust(csf_results$P_Raw, method = "fdr")
     csf_results$Significant_FDR <- csf_results$P_FDR < opt$fdr_threshold
     
-    cat("\n  CSF Results (Methods 2.4, 2.8):\n")
+    cat("\n  CSF Results :\n")
     for (i in 1:nrow(csf_results)) {
       cat(sprintf("    %s: p_raw=%.4f, p_FDR=%.4f, η²=%.3f (%s), max|SMD|=%.2f\n",
                   csf_results$Biomarker[i],
@@ -328,10 +327,10 @@ if (length(mri_features) > 0) {
       kw_result <- kruskal.test(as.formula(paste(region, "~ factor(Subtype)")), data = test_data)
       p_value <- kw_result$p.value
       
-      # Eta-squared (Methods 2.8)
+      # Eta-squared 
       eta_result <- calculate_eta_squared(test_data[[region]], test_data$Subtype)
       
-      # Pairwise SMD (Methods 2.4)
+      # Pairwise SMD 
       smd_results <- calculate_pairwise_smd(test_data[[region]], test_data$Subtype)
       max_smd <- if (!is.null(smd_results) && nrow(smd_results) > 0) {
         max(abs(smd_results$Cohen_d), na.rm = TRUE)
@@ -352,7 +351,7 @@ if (length(mri_features) > 0) {
       ))
     }
     
-    # FDR correction (Methods 2.4)
+    # FDR correction
     mri_results$P_FDR <- p.adjust(mri_results$P_Raw, method = "fdr")
     mri_results$Significant_FDR <- mri_results$P_FDR < opt$fdr_threshold
     
@@ -361,7 +360,7 @@ if (length(mri_features) > 0) {
     n_clinical <- sum(mri_results$Clinically_Meaningful, na.rm = TRUE)
     n_large_effect <- sum(mri_results$Eta_Interpretation == "Large", na.rm = TRUE)
     
-    cat(sprintf("\n  MRI Results Summary (Methods 2.4, 2.8):\n"))
+    cat(sprintf("\n  MRI Results Summary :\n"))
     cat(sprintf("    Total regions: %d\n", nrow(mri_results)))
     cat(sprintf("    Significant (FDR < %.2f): %d\n", opt$fdr_threshold, n_sig))
     cat(sprintf("    Clinically meaningful (|SMD| > %.1f): %d\n", opt$smd_threshold, n_clinical))
@@ -425,18 +424,10 @@ cat("[4/4] Generating summary report...\n\n")
 
 summary_lines <- c(
   "================================================================================",
-  "Cross-Modal Validation Report (Methods 2.4, 2.8 Aligned)",
+  "Cross-Modal Validation Report ",
   "================================================================================",
   "",
   sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods Requirements:",
-  sprintf("  Methods 2.4: Benjamini-Hochberg FDR correction (q < %.2f)", opt$fdr_threshold),
-  sprintf("  Methods 2.4: |SMD| > %.1f for clinical meaningfulness", opt$smd_threshold),
-  "  Methods 2.8: Eta-squared effect sizes",
-  "    - η² ≥ 0.01: Small effect",
-  "    - η² ≥ 0.06: Medium effect",
-  "    - η² ≥ 0.14: Large effect",
   "",
   "--------------------------------------------------------------------------------",
   "Data Summary",
@@ -535,3 +526,4 @@ cat("Step 15: Cross-Modal Validation Complete!\n")
 cat("========================================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
 cat(sprintf("Output directory: %s\n", opt$output_dir))
+
