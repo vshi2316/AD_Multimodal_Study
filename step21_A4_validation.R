@@ -23,11 +23,11 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--n_impute"), type = "integer", default = 5,
-              help = "Number of MICE imputations (Methods 2.9: 5) [default: %default]"),
+              help = "Number of MICE imputations "),
   make_option(c("--n_bootstrap"), type = "integer", default = 2000,
-              help = "Number of bootstrap iterations for AUC CI (Methods 2.9: 2000) [default: %default]"),
+              help = "Number of bootstrap iterations for AUC CI "),
   make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
-              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]"),
+              help = "FDR significance threshold ( q < 0.05) "),
   make_option(c("--min_followup"), type = "numeric", default = 0.5,
               help = "Minimum follow-up years [default: %default]")
 )
@@ -129,9 +129,9 @@ cat(sprintf("  Available features: %d\n", length(available_features)))
 cat(sprintf("  Missing features: %d\n\n", length(missing_features)))
 
 # ==============================================================================
-# Part 3: MICE Multiple Imputation (Methods 2.9)
+# Part 3: MICE Multiple Imputation 
 # ==============================================================================
-cat(sprintf("[3/6] MICE multiple imputation (%d datasets, Methods 2.9)...\n", opt$n_impute))
+cat(sprintf("[3/6] MICE multiple imputation (%d datasets)...\n", opt$n_impute))
 
 # Prepare data for imputation
 features_to_impute <- available_features[available_features %in% colnames(a4_analysis)]
@@ -211,9 +211,9 @@ write.csv(a4_with_subtype,
 cat("\n")
 
 # ==============================================================================
-# Part 5: Survival Analysis (Methods 2.4, 2.5)
+# Part 5: Survival Analysis
 # ==============================================================================
-cat("[5/6] Survival analysis (Methods 2.4, 2.5)...\n")
+cat("[5/6] Survival analysis ...\n")
 
 survival_data <- a4_with_subtype %>%
   filter(!is.na(AD_Conversion), !is.na(Followup_Years), !is.na(Predicted_Subtype)) %>%
@@ -247,7 +247,7 @@ km_plot <- ggsurvplot(
   risk.table.col = "strata",
   palette = c("#E41A1C", "#377EB8", "#4DAF4A")[1:length(unique(survival_data$Subtype))],
   title = sprintf("A4 Study Cohort (n=%d, %d events)", n_samples, n_events),
-  subtitle = "Primary External Validation (Methods 2.5)",
+  subtitle = "Primary External Validation ",
   xlab = "Follow-up Time (Years)",
   ylab = "Event-Free Survival",
   legend.title = "Subtype",
@@ -292,11 +292,11 @@ cox_results <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# FDR correction (Methods 2.4)
+# FDR correction 
 cox_results$P_FDR <- p.adjust(cox_results$P_Raw, method = "fdr")
 cox_results$Significant_FDR <- cox_results$P_FDR < opt$fdr_threshold
 
-cat("\n  Cox Regression Results (Methods 2.4):\n")
+cat("\n  Cox Regression Results:\n")
 for (i in 1:nrow(cox_results)) {
   sig_marker <- ifelse(cox_results$Significant_FDR[i], "*", "")
   cat(sprintf("    %s: HR=%.2f (95%% CI: %.2f-%.2f), p_FDR=%.4f%s\n",
@@ -313,9 +313,9 @@ write.csv(cox_results,
           row.names = FALSE)
 
 # ==============================================================================
-# Part 6: AUC with Bootstrap CI (Methods 2.5, 2.9)
+# Part 6: AUC with Bootstrap CI
 # ==============================================================================
-cat(sprintf("\n[6/6] AUC calculation with %d bootstrap iterations (Methods 2.9)...\n", 
+cat(sprintf("\n[6/6] AUC calculation with %d bootstrap iterations ...\n", 
             opt$n_bootstrap))
 
 # Create risk score from Cox model
@@ -325,7 +325,7 @@ survival_data$Risk_Score <- predict(cox_model, type = "risk")
 roc_obj <- roc(survival_data$AD_Conversion, survival_data$Risk_Score, quiet = TRUE)
 auc_value <- as.numeric(auc(roc_obj))
 
-# Bootstrap CI (Methods 2.9: 2000 iterations)
+# Bootstrap CI
 ci_auc <- ci.auc(roc_obj, conf.level = 0.95, method = "bootstrap", boot.n = opt$n_bootstrap)
 
 cat(sprintf("  AUC: %.3f (95%% CI: %.3f-%.3f)\n", auc_value, ci_auc[1], ci_auc[3]))
@@ -372,17 +372,10 @@ cat("\n")
 
 summary_lines <- c(
   "================================================================================",
-  "A4 Study External Validation Report (Methods 2.4, 2.5, 2.9 Aligned)",
+  "A4 Study External Validation Report ",
   "================================================================================",
   "",
   sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods Requirements:",
-  "  Methods 2.5: Primary external validation with AUC and 95% CI",
-  sprintf("  Methods 2.9: MICE multiple imputation (%d datasets)", opt$n_impute),
-  sprintf("  Methods 2.9: Bootstrap %d iterations for AUC CI", opt$n_bootstrap),
-  sprintf("  Methods 2.4: Benjamini-Hochberg FDR correction (q < %.2f)", opt$fdr_threshold),
-  "",
   "--------------------------------------------------------------------------------",
   "Data Summary",
   "--------------------------------------------------------------------------------",
@@ -413,7 +406,7 @@ for (i in 1:nrow(cox_results)) {
 summary_lines <- c(summary_lines,
   "",
   "--------------------------------------------------------------------------------",
-  "Predictive Performance (Methods 2.5)",
+  "Predictive Performance",
   "--------------------------------------------------------------------------------",
   sprintf("  AUC: %.3f (95%% CI: %.3f-%.3f)", auc_value, ci_auc[1], ci_auc[3]),
   sprintf("  Bootstrap iterations: %d", opt$n_bootstrap),
@@ -450,3 +443,4 @@ cat("============================================================\n")
 cat("Step 21: A4 Study External Validation Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
+
