@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='PET Imaging Preprocessing (Methods 2.2) - No Premature Standardization'
+        description='PET Imaging Preprocessing'
     )
     parser.add_argument('--amyloid_file', type=str,
                         default='./ADNI_Raw_Data/PET/Amyloid_PET.csv',
@@ -79,12 +79,7 @@ def preprocess_pet(amyloid_file, tau_file, output_file, output_dir, log_transfor
     """
     Main preprocessing function for PET imaging data.
     
-    Methods 2.2 Implementation:
-    - Load Amyloid and Tau PET data
-    - Extract baseline visits
-    - Select regional SUVR features
-    - Apply log transformation (monotonic, no leakage)
-    - OUTPUT WITHOUT Z-SCORE STANDARDIZATION (deferred to Step 7)
+
     
     Args:
         amyloid_file: Path to Amyloid PET CSV
@@ -93,9 +88,6 @@ def preprocess_pet(amyloid_file, tau_file, output_file, output_dir, log_transfor
         output_dir: Output directory
         log_transform: Whether to apply log transformation
     """
-    print("=" * 70)
-    print("Step 5: PET Imaging Preprocessing (Methods 2.2)")
-    print("CORRECTED: No premature standardization (deferred to Step 7)")
     print("=" * 70)
     
     # Create output directory
@@ -115,16 +107,13 @@ def preprocess_pet(amyloid_file, tau_file, output_file, output_dir, log_transfor
     print(f"  Amyloid baseline: {len(amyloid_baseline)} records")
     print(f"  Tau baseline: {len(tau_baseline)} records")
     
-    # Extract PET SUVR features (Methods 2.2)
-    print("\n[3/6] Extracting PET SUVR features...")
-    
     # Amyloid PET ROIs
     amyloid_roi_keywords = ['frontal', 'temporal', 'parietal', 'cingulate', 
                            'precuneus', 'global', 'composite', 'cortical']
     amyloid_features = extract_pet_features(amyloid_baseline, amyloid_roi_keywords, 'Amyloid')
     print(f"  Amyloid features: {len(amyloid_features)}")
     
-    # Tau PET ROIs (Methods 2.2: entorhinal, hippocampus, temporal)
+    # Tau PET ROIs 
     tau_roi_keywords = ['entorhinal', 'hippocampus', 'temporal', 'fusiform', 
                        'parahippocampal', 'global', 'composite', 'braak']
     tau_features = extract_pet_features(tau_baseline, tau_roi_keywords, 'Tau')
@@ -198,12 +187,6 @@ def preprocess_pet(amyloid_file, tau_file, output_file, output_dir, log_transfor
     print(f"  Total subjects: {len(pet_merged)}")
     print(f"  Total features: {len(all_features)}")
     
-    print("\n" + "-" * 70)
-    print("NOTE: Output contains log-transformed values (NOT standardized)")
-    print("Z-score standardization will be applied in Step 7 after train/test split")
-    print("This ensures Methods 2.3 compliance: 'parameters derived exclusively from training set'")
-    print("-" * 70)
-    
     print("\n" + "=" * 70)
     print("Step 5: PET Preprocessing Complete")
     print("=" * 70)
@@ -225,3 +208,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
