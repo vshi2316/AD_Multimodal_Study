@@ -25,13 +25,13 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--n_bootstrap"), type = "integer", default = 100,
-              help = "Number of bootstrap iterations (Methods 2.7) [default: %default]"),
+              help = "Number of bootstrap iterations "),
   make_option(c("--n_consensus"), type = "integer", default = 1000,
               help = "Number of consensus clustering iterations [default: %default]"),
   make_option(c("--stability_threshold"), type = "numeric", default = 0.85,
-              help = "Sample stability threshold (Methods 2.7: >0.85) [default: %default]"),
+              help = "Sample stability threshold ( >0.85) [default: %default]"),
   make_option(c("--pac_threshold"), type = "numeric", default = 0.05,
-              help = "PAC threshold for clear structure (Methods 2.7: <0.05) [default: %default]")
+              help = "PAC threshold for clear structure (<0.05) [default: %default]")
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -41,11 +41,11 @@ opt <- parse_args(opt_parser)
 dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
 
 cat("========================================================================\n")
-cat("   Step 14: Cluster Validation (Methods 2.7 Aligned)\n")
+cat("   Step 14: Cluster Validation \n")
 cat("========================================================================\n\n")
-cat(sprintf("Bootstrap iterations: %d (Methods 2.7)\n", opt$n_bootstrap))
-cat(sprintf("Stability threshold: >%.2f (Methods 2.7)\n", opt$stability_threshold))
-cat(sprintf("PAC threshold: <%.2f (Methods 2.7)\n\n", opt$pac_threshold))
+cat(sprintf("Bootstrap iterations: %d \n", opt$n_bootstrap))
+cat(sprintf("Stability threshold: >%.2f \n", opt$stability_threshold))
+cat(sprintf("PAC threshold: <%.2f \n\n", opt$pac_threshold))
 
 calculate_jaccard_index <- function(labels_true, labels_pred) {
   # Get unique labels
@@ -86,7 +86,6 @@ calculate_jaccard_index <- function(labels_true, labels_pred) {
 }
 
 #' Calculate PAC (Proportion of Ambiguous Clustering)
-#' Methods 2.7: "PAC<0.05 indicating clear structure"
 calculate_PAC <- function(consensus_matrix, lower = 0.1, upper = 0.9) {
   lower_tri <- consensus_matrix[lower.tri(consensus_matrix)]
   pac <- sum(lower_tri > lower & lower_tri < upper) / length(lower_tri)
@@ -94,7 +93,6 @@ calculate_PAC <- function(consensus_matrix, lower = 0.1, upper = 0.9) {
 }
 
 #' Calculate Sample-Level Stability
-#' Methods 2.7: ">0.85 indicating stable assignment"
 calculate_sample_stability <- function(boot_matrix, original_labels) {
   n_samples <- nrow(boot_matrix)
   n_bootstrap <- ncol(boot_matrix)
@@ -199,7 +197,7 @@ for (k in 2:6) {
   cm <- consensus_result[[k]]$consensusMatrix
   cl <- consensus_result[[k]]$consensusClass
   
-  # PAC (Methods 2.7)
+  # PAC 
   stability_table$PAC[k - 1] <- calculate_PAC(cm)
   
   # Minimum cluster size
@@ -235,9 +233,9 @@ write.csv(stability_table,
           row.names = FALSE)
 
 # ==============================================================================
-# Part 3: Bootstrap Stability Analysis (Methods 2.7)
+# Part 3: Bootstrap Stability Analysis 
 # ==============================================================================
-cat("[3/5] Bootstrap Stability Analysis (Methods 2.7)...\n")
+cat("[3/5] Bootstrap Stability Analysis ...\n")
 
 # Check for latent embeddings and cluster results
 latent_available <- file.exists(opt$latent_file)
@@ -257,7 +255,7 @@ if (latent_available && cluster_available) {
   sample_ratio <- 0.8
   
   cat(sprintf("  Samples: %d, Clusters: %d\n", n_samples_boot, k))
-  cat(sprintf("  Bootstrap iterations: %d (Methods 2.7)\n", opt$n_bootstrap))
+  cat(sprintf("  Bootstrap iterations: %d \n", opt$n_bootstrap))
   cat(sprintf("  Sample ratio: %.0f%%\n\n", 100 * sample_ratio))
   
   # Bootstrap resampling
@@ -270,7 +268,7 @@ if (latent_available && cluster_available) {
   for (b in 1:opt$n_bootstrap) {
     set.seed(b)
     
-    # Sample with replacement (Methods 2.7)
+    # Sample with replacement 
     sample_idx <- sample(1:n_samples_boot, 
                          size = floor(n_samples_boot * sample_ratio), 
                          replace = TRUE)
@@ -289,10 +287,10 @@ if (latent_available && cluster_available) {
       boot_matrix[idx, b] <- boot_labels_pred[which(sample_idx == idx)[1]]
     }
     
-    # Calculate ARI (Methods 2.7)
+    # Calculate ARI 
     ari_values[b] <- adjustedRandIndex(boot_labels_true, boot_labels_pred)
     
-    # Calculate Jaccard Index (Methods 2.7)
+    # Calculate Jaccard Index 
     jaccard_values[b] <- calculate_jaccard_index(boot_labels_true, boot_labels_pred)
     
     if (b %% 20 == 0) {
@@ -300,7 +298,7 @@ if (latent_available && cluster_available) {
     }
   }
   
-  # Calculate sample-level stability (Methods 2.7: >0.85)
+  # Calculate sample-level stability (>0.85)
   sample_stability <- calculate_sample_stability(boot_matrix, original_labels)
   
   # Summary statistics
@@ -317,7 +315,7 @@ if (latent_available && cluster_available) {
   sil <- silhouette(original_labels, dist_matrix)
   avg_sil <- mean(sil[, 3])
   
-  cat(sprintf("\n  Bootstrap Results (Methods 2.7):\n"))
+  cat(sprintf("\n  Bootstrap Results :\n"))
   cat(sprintf("    ARI: %.3f ± %.3f\n", mean_ari, sd_ari))
   cat(sprintf("    Jaccard Index: %.3f ± %.3f\n", mean_jaccard, sd_jaccard))
   cat(sprintf("    Sample Stability: %.3f\n", mean_stability))
@@ -326,7 +324,7 @@ if (latent_available && cluster_available) {
               sum(!is.na(sample_stability)), 100 * stable_fraction))
   cat(sprintf("    Silhouette: %.3f\n\n", avg_sil))
   
-  # Interpretation (Methods 2.7)
+  # Interpretation 
   if (mean_ari > 0.8) {
     ari_interpretation <- "Excellent stability"
   } else if (mean_ari > 0.6) {
@@ -488,15 +486,8 @@ cat("[5/5] Generating summary report...\n\n")
 
 summary_lines <- c(
   "================================================================================",
-  "Cluster Validation Report (Methods 2.7 Aligned)",
+  "Cluster Validation Report ",
   "================================================================================",
-  "",
-  sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods 2.7 Requirements:",
-  sprintf("  - Bootstrap iterations: %d", opt$n_bootstrap),
-  sprintf("  - Sample stability threshold: >%.2f", opt$stability_threshold),
-  sprintf("  - PAC threshold: <%.2f", opt$pac_threshold),
   "",
   "--------------------------------------------------------------------------------",
   "PART 1: Consensus Clustering",
@@ -515,7 +506,7 @@ summary_lines <- c(
 if (bootstrap_completed) {
   summary_lines <- c(summary_lines,
     "--------------------------------------------------------------------------------",
-    "PART 2: Bootstrap Stability Analysis (Methods 2.7)",
+    "PART 2: Bootstrap Stability Analysis",
     "--------------------------------------------------------------------------------",
     sprintf("  Bootstrap iterations: %d", opt$n_bootstrap),
     sprintf("  Sample ratio: 80%%"),
@@ -529,7 +520,6 @@ if (bootstrap_completed) {
             sum(!is.na(sample_stability)), 100 * stable_fraction),
     sprintf("    Silhouette: %.3f", avg_sil),
     "",
-    "  Methods 2.7 Criteria:",
     sprintf("    ARI > 0.8: %s", ifelse(mean_ari > 0.8, "PASS - Excellent stability", 
                                         ifelse(mean_ari > 0.6, "PASS - Good stability", 
                                                "MARGINAL - Moderate stability"))),
@@ -587,3 +577,4 @@ cat("Step 14: Cluster Validation Complete!\n")
 cat("========================================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
 cat(sprintf("Output directory: %s\n", opt$output_dir))
+
