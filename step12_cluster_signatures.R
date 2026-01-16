@@ -31,12 +31,7 @@ opt <- parse_args(opt_parser)
 # Create output directory
 dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
 
-# ==============================================================================
-# Methods 2.8: Effect Size Functions
-# ==============================================================================
-
 #' Calculate Eta-squared effect size
-#' Methods 2.8: "Eta-squared (η²) quantifies effect sizes: between-group sum 
 #' of squares divided by total sum of squares, with 0.01, 0.06, and 0.14 
 #' representing small, medium, and significant effects per Cohen's criteria"
 calculate_eta_squared <- function(values, groups) {
@@ -187,7 +182,7 @@ for (feat in feature_cols) {
   # Median imputation
   values[is.na(values)] <- median(values, na.rm = TRUE)
   
-  # Kruskal-Wallis test (non-parametric, Methods 2.4)
+  # Kruskal-Wallis test 
   kw_test <- tryCatch(
     kruskal.test(values ~ groups),
     error = function(e) list(statistic = NA, p.value = NA)
@@ -201,7 +196,7 @@ for (feat in feature_cols) {
   
   anova_p <- if (!is.null(anova_test)) anova_test$`Pr(>F)`[1] else NA
   
-  # Eta-squared (Methods 2.8)
+  # Eta-squared 
   eta_sq <- calculate_eta_squared(values, groups)
   
   # Calculate cluster means
@@ -237,7 +232,7 @@ for (feat in feature_cols) {
   stat_results <- rbind(stat_results, result_row)
 }
 
-# Apply Benjamini-Hochberg FDR correction (Methods 2.4)
+# Apply Benjamini-Hochberg FDR correction
 stat_results$P_adj_FDR <- p.adjust(stat_results$KW_P_Value, method = "BH")
 stat_results$FDR_Significant <- stat_results$P_adj_FDR < opt$fdr_threshold
 
@@ -449,7 +444,7 @@ p_effect <- ggplot(stat_results, aes(x = Eta_Squared, fill = Eta_Interpretation)
                                 "Small" = "#2ca02c", "Negligible" = "grey70")) +
   labs(
     title = "Distribution of Effect Sizes (η²)",
-    subtitle = "Methods 2.8: Cohen's criteria (0.01 small, 0.06 medium, 0.14 large)",
+    subtitle = "Cohen's criteria (0.01 small, 0.06 medium, 0.14 large)",
     x = "Eta-squared (η²)",
     y = "Count",
     fill = "Effect Size"
@@ -484,12 +479,6 @@ cat("\n========================================================================\
 cat("Cluster Signature Analysis Complete!\n")
 cat("========================================================================\n\n")
 
-cat("Methods Compliance:\n")
-cat("  ✓ Kruskal-Wallis tests for group comparisons (Methods 2.4)\n")
-cat(sprintf("  ✓ Benjamini-Hochberg FDR correction (q < %.2f)\n", opt$fdr_threshold))
-cat("  ✓ Eta-squared effect sizes (Methods 2.8)\n")
-cat("  ✓ Cohen's criteria (0.01 small, 0.06 medium, 0.14 large)\n")
-
 cat("\nKey Findings:\n")
 cat(sprintf("  Total features analyzed: %d\n", nrow(stat_results)))
 cat(sprintf("  FDR-significant: %d\n", sum(stat_results$FDR_Significant, na.rm = TRUE)))
@@ -505,3 +494,4 @@ cat("  - Signature_Heatmap_FDR.png\n")
 cat("  - Effect_Size_Distribution_Clusters.png\n")
 
 cat("\n========================================================================\n")
+
