@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Cohort Integration with Frozen Pipeline (Methods 2.3 & 2.6)'
+        description='Cohort Integration with Frozen Pipeline'
     )
     parser.add_argument('--data_dir', type=str,
                         default='./processed_data',
@@ -25,9 +25,9 @@ def parse_args():
                         default='./processed_data',
                         help='Output directory')
     parser.add_argument('--test_size', type=int, default=196,
-                        help='Number of MCI patients for independent test set (Methods 2.6: 196)')
+                        help='Number of MCI patients for independent test set ')
     parser.add_argument('--mice_iterations', type=int, default=15,
-                        help='MICE imputation iterations (Methods 2.6: 15)')
+                        help='MICE imputation iterations ')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility')
     parser.add_argument('--discovery_output', type=str,
@@ -57,23 +57,19 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
     """
     Main function implementing the Frozen Pipeline Strategy.
     
-    Methods 2.3 & 2.6 Strict Compliance:
-    - All preprocessing parameters fitted on training set ONLY
-    - Test set transformed using training-fitted parameters
-    - No data leakage from test to training
+ 
     
     Args:
         data_dir: Directory containing raw preprocessed files
         output_dir: Output directory
         test_size: Number of samples for independent test set
-        mice_iterations: MICE iterations (Methods 2.6: 15)
+        mice_iterations: MICE iterations 
         seed: Random seed
         discovery_output: Filename for discovery cohort
         test_output: Filename for test set
     """
     print("=" * 70)
     print("Step 7: Cohort Integration with Frozen Pipeline Strategy")
-    print("Methods 2.3 & 2.6 STRICT COMPLIANCE")
     print("=" * 70)
     
     np.random.seed(seed)
@@ -139,8 +135,7 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
     # PHASE 3: Split into Discovery (Training) and Test sets
     # =========================================================================
     print(f"\n[3/7] Splitting into Discovery and Test sets...")
-    print(f"  Methods 2.6: {test_size} MCI patients for independent test set")
-    
+  
     # Identify MCI patients for test set (based on outcome)
     if 'AD_Conversion' in integrated.columns:
         # Stratified sampling to maintain conversion rate
@@ -205,7 +200,7 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
     # PHASE 5: MICE Imputation (Fit on Discovery ONLY)
     # =========================================================================
     print(f"\n[5/7] MICE Imputation ({mice_iterations} iterations)")
-    print("  CRITICAL: Fitting imputer on DISCOVERY set ONLY (Methods 2.6)")
+
     
     # Report missing values before imputation
     n_missing_disc = discovery_data[numeric_cols].isnull().sum().sum()
@@ -242,7 +237,7 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
     # PHASE 6: Z-score Standardization (Fit on Discovery ONLY)
     # =========================================================================
     print("\n[6/7] Z-score Standardization")
-    print("  CRITICAL: Fitting scaler on DISCOVERY set ONLY (Methods 2.3)")
+ 
     
     # Fit StandardScaler on Discovery set ONLY
     scaler = StandardScaler()
@@ -339,35 +334,7 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
     print("\n" + "=" * 70)
     print("FROZEN PIPELINE STRATEGY - COMPLIANCE SUMMARY")
     print("=" * 70)
-    print("\nMethods 2.3 Compliance:")
-    print("  ✓ StandardScaler fitted on Discovery (Training) set ONLY")
-    print("  ✓ Test set transformed using Discovery-fitted parameters")
-    print("  ✓ No data leakage from Test to Training")
-    
-    print("\nMethods 2.6 Compliance:")
-    print(f"  ✓ MICE imputation: {mice_iterations} iterations")
-    print("  ✓ MICE fitted on Discovery (Training) set ONLY")
-    print("  ✓ Test set imputed using Discovery-fitted equations")
-    print(f"  ✓ Independent test set: {len(test_data)} MCI patients")
-    
-    print("\nStep 8+ Compatibility:")
-    print("  ✓ Column names mapped to VAE expected format")
-    print("  ✓ CSF biomarkers: PTAU181 -> CSF_PTAU181, etc.")
-    print("  ✓ APOE: APOE4_STATUS -> APOE_VAR")
-    
-    print("\nOutput Files:")
-    print(f"  - {discovery_output}: Discovery cohort (standardized)")
-    print(f"  - {test_output}: Independent test set (standardized)")
-    print(f"  - pipeline_imputer.pkl: Fitted MICE imputer")
-    print(f"  - pipeline_scaler.pkl: Fitted StandardScaler")
-    print(f"  - feature_columns.pkl: List of feature columns")
-    
-    print("\nUsage for External Validation:")
-    print("  1. Load external cohort data")
-    print("  2. Load pipeline_imputer.pkl and pipeline_scaler.pkl")
-    print("  3. imputer.transform(external_data) - DO NOT refit!")
-    print("  4. scaler.transform(external_data) - DO NOT refit!")
-    
+   
     print("\n" + "=" * 70)
     print("Step 7: Cohort Integration Complete")
     print("DATA LEAKAGE PREVENTION GUARANTEED")
@@ -392,3 +359,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
