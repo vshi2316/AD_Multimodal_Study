@@ -22,9 +22,9 @@ option_list <- list(
   make_option(c("--output_dir"), type = "character", default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
-              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]"),
+              help = "FDR significance threshold (q < 0.05) [default: %default]"),
   make_option(c("--smd_threshold"), type = "numeric", default = 0.5,
-              help = "SMD clinical meaningfulness threshold (Methods 2.4: |SMD| > 0.5) [default: %default]")
+              help = "SMD clinical meaningfulness threshold (|SMD| > 0.5) [default: %default]")
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -33,12 +33,7 @@ opt <- parse_args(opt_parser)
 # Create output directory
 dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
 
-# ==============================================================================
-# Methods 2.8: Effect Size Functions
-# ==============================================================================
-
 #' Calculate Cohen's d (Standardized Mean Difference)
-#' Methods 2.4: "requiring |SMD| > 0.5 for clinical meaningfulness"
 calculate_cohens_d <- function(group1, group2) {
   n1 <- length(group1)
   n2 <- length(group2)
@@ -56,7 +51,6 @@ calculate_cohens_d <- function(group1, group2) {
 }
 
 #' Calculate Eta-squared effect size
-#' Methods 2.8: "Eta-squared (η²) quantifies effect sizes"
 calculate_eta_squared <- function(values, groups) {
   values <- as.numeric(values)
   groups <- as.factor(groups)
@@ -186,7 +180,7 @@ for (feat in feature_cols) {
   converter_vals <- values[all_data$AD_Conversion == 1]
   nonconverter_vals <- values[all_data$AD_Conversion == 0]
   
-  # Wilcoxon rank-sum test (Methods 2.4)
+  # Wilcoxon rank-sum test 
   wilcox_test <- tryCatch(
     wilcox.test(converter_vals, nonconverter_vals),
     error = function(e) list(statistic = NA, p.value = NA)
@@ -227,7 +221,7 @@ for (feat in feature_cols) {
   ))
 }
 
-# Apply Benjamini-Hochberg FDR correction (Methods 2.4: q < 0.05)
+# Apply Benjamini-Hochberg FDR correction ( q < 0.05)
 all_diff_results$P_adj_FDR <- p.adjust(all_diff_results$P_Value, method = "BH")
 
 # Determine significance
@@ -319,7 +313,7 @@ p_volcano <- ggplot(all_diff_results, aes(x = SMD, y = -log10(P_adj_FDR),
   geom_text_repel(size = 3, max.overlaps = 15) +
   labs(
     title = "Differential Analysis: AD Converters vs Non-Converters",
-    subtitle = sprintf("FDR threshold: q < %.2f, SMD threshold: |SMD| > %.1f (Methods 2.4)", 
+    subtitle = sprintf("FDR threshold: q < %.2f, SMD threshold: |SMD| > %.1f ", 
                        opt$fdr_threshold, opt$smd_threshold),
     x = "Standardized Mean Difference (Cohen's d)",
     y = expression(-log[10]~"(FDR-adjusted P-value)")
@@ -396,7 +390,7 @@ p_effect <- ggplot(all_diff_results, aes(x = Eta_Squared, fill = Eta_Interpretat
                                 "Small" = "#2ca02c", "Negligible" = "grey70")) +
   labs(
     title = "Distribution of Effect Sizes (η²)",
-    subtitle = "Methods 2.8: Cohen's criteria (0.01 small, 0.06 medium, 0.14 large)",
+    subtitle = "Cohen's criteria (0.01 small, 0.06 medium, 0.14 large)",
     x = "Eta-squared (η²)",
     y = "Count",
     fill = "Effect Size"
@@ -439,13 +433,6 @@ if (file.exists(cluster_diff_file)) {
 cat("\n========================================================================\n")
 cat("Conversion Differential Analysis Complete!\n")
 cat("========================================================================\n\n")
-
-cat("Methods Compliance:\n")
-cat(sprintf("  ✓ Benjamini-Hochberg FDR correction (q < %.2f) - Methods 2.4\n", opt$fdr_threshold))
-cat(sprintf("  ✓ SMD clinical meaningfulness threshold (|SMD| > %.1f) - Methods 2.4\n", opt$smd_threshold))
-cat("  ✓ Wilcoxon rank-sum tests for continuous variables - Methods 2.4\n")
-cat("  ✓ Eta-squared effect sizes with Cohen's criteria - Methods 2.8\n")
-
 cat("\nKey Findings:\n")
 cat(sprintf("  Total features analyzed: %d\n", nrow(all_diff_results)))
 cat(sprintf("  FDR significant (q < %.2f): %d\n", opt$fdr_threshold, sum(all_diff_results$FDR_Significant, na.rm = TRUE)))
@@ -479,3 +466,4 @@ cat("  - Top30_SMD_Conversion_FDR.png\n")
 cat("  - Effect_Size_Distribution_Conversion.png\n")
 
 cat("\n========================================================================\n")
+
