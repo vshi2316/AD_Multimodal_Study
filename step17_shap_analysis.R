@@ -16,7 +16,7 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--n_bootstrap"), type = "integer", default = 2000,
-              help = "Number of bootstrap iterations (Methods 2.9: 2000) [default: %default]"),
+              help = "Number of bootstrap iterations "),
   make_option(c("--n_trees"), type = "integer", default = 500,
               help = "Number of trees in Random Forest [default: %default]"),
   make_option(c("--shap_nsim"), type = "integer", default = 50,
@@ -141,9 +141,9 @@ colnames(shap_df) <- available_features
 cat("  SHAP calculation complete\n\n")
 
 # ==============================================================================
-# Part 4: Bootstrap Confidence Intervals (Methods 2.9)
+# Part 4: Bootstrap Confidence Intervals 
 # ==============================================================================
-cat(sprintf("[4/5] Bootstrap analysis (%d iterations, Methods 2.9)...\n", opt$n_bootstrap))
+cat(sprintf("[4/5] Bootstrap analysis (%d iterations)...\n", opt$n_bootstrap))
 
 # Calculate mean absolute SHAP for each feature
 mean_abs_shap <- colMeans(abs(shap_df))
@@ -183,14 +183,14 @@ feature_importance <- data.frame(
 feature_importance$Z_Score <- feature_importance$Importance / feature_importance$SE
 feature_importance$P_Raw <- 2 * pnorm(-abs(feature_importance$Z_Score))
 
-# FDR correction (Methods 2.4)
+# FDR correction 
 feature_importance$P_FDR <- p.adjust(feature_importance$P_Raw, method = "fdr")
 feature_importance$Significant_FDR <- feature_importance$P_FDR < 0.05
 
 # Rank
 feature_importance$Rank <- 1:nrow(feature_importance)
 
-cat("\nFeature Importance (Methods 2.9 Bootstrap CI):\n")
+cat("\nFeature Importance :\n")
 for (i in 1:nrow(feature_importance)) {
   sig_marker <- ifelse(feature_importance$Significant_FDR[i], "*", "")
   cat(sprintf("  %d. %s: %.4f (95%% CI: %.4f-%.4f) p_FDR=%.4f%s\n",
@@ -233,7 +233,7 @@ p1 <- ggplot(shap_long, aes(x = SHAP, y = Feature)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "gray50") +
   labs(
     title = "SHAP Summary Plot",
-    subtitle = sprintf("n=%d samples, %d bootstrap iterations (Methods 2.9)", 
+    subtitle = sprintf("n=%d samples, %d bootstrap iterations ", 
                        sample_size, opt$n_bootstrap),
     x = "SHAP Value (Impact on Model Output)",
     y = "Feature"
@@ -257,7 +257,7 @@ p2 <- ggplot(feature_importance, aes(x = reorder(Feature, Importance), y = Impor
   coord_flip() +
   labs(
     title = "Global Feature Importance (Mean |SHAP|)",
-    subtitle = sprintf("95%% CI from %d bootstrap iterations (Methods 2.9)", opt$n_bootstrap),
+    subtitle = sprintf("95%% CI from %d bootstrap iterations", opt$n_bootstrap),
     x = "Feature",
     y = "Mean |SHAP Value|"
   ) +
@@ -349,14 +349,8 @@ cat("\n")
 
 summary_lines <- c(
   "================================================================================",
-  "SHAP Feature Importance Analysis Report (Methods 2.9 Aligned)",
+  "SHAP Feature Importance Analysis Report",
   "================================================================================",
-  "",
-  sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods Requirements:",
-  sprintf("  Methods 2.9: Bootstrap %d iterations for 95%% CI", opt$n_bootstrap),
-  "  Methods 2.4: Benjamini-Hochberg FDR correction",
   "",
   "--------------------------------------------------------------------------------",
   "Data Summary",
@@ -421,3 +415,4 @@ cat("============================================================\n")
 cat("Step 17: SHAP Analysis Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
+
