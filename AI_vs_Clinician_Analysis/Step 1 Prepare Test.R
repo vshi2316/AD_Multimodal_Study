@@ -16,7 +16,7 @@ option_list <- list(
               default = "./AI_vs_Clinician_Test",
               help = "Output directory [default: %default]"),
   make_option(c("--target_n"), type = "integer", default = 196,
-              help = "Target sample size (Methods 2.6: 196) [default: %default]"),
+              help = "Target sample size [default: %default]"),
   make_option(c("--min_age"), type = "integer", default = 50,
               help = "Minimum age [default: %default]"),
   make_option(c("--max_age"), type = "integer", default = 95,
@@ -221,9 +221,9 @@ merged_all <- mci_cohort %>%
 cat(sprintf("  Merged data: %d subjects\n", nrow(merged_all)))
 
 # ==============================================================================
-# Part 4: Exclude Training Set (Methods 2.6 - Physical Sequestration)
+# Part 4: Exclude Training Set 
 # ==============================================================================
-cat("\n[4/5] Excluding training set samples (Methods 2.6)...\n")
+cat("\n[4/5] Excluding training set samples ...\n")
 
 if (file.exists(opt$train_file)) {
   train_data <- read_csv(opt$train_file, show_col_types = FALSE)
@@ -352,7 +352,7 @@ write_csv(output_df_final, out_csv)
 # ==============================================================================
 cat("\n")
 cat("============================================================\n")
-cat("Independent Test Set Summary (Methods 2.6)\n")
+cat("Independent Test Set Summary\n")
 cat("============================================================\n")
 cat(sprintf("Output file: %s\n", out_csv))
 cat(sprintf("Final sample size: %d (Target: %d)\n", nrow(output_df_final), opt$target_n))
@@ -363,8 +363,8 @@ cat(sprintf("Non-converters: %d (%.1f%%)\n",
             sum(output_df_final$AD_Conversion == 0), 
             100 * mean(output_df_final$AD_Conversion == 0)))
 cat(sprintf("MRI features: %d\n", length(st_cols)))
-cat("\nMethods 2.6 Compliance:\n")
 cat("  ✓ Independent test set physically sequestered from training\n")
 cat("  ✓ MCI patients from ADNI\n")
 cat("  ✓ Training set samples excluded\n")
 cat("\nStep 1 complete.\n")
+
