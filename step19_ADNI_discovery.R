@@ -20,9 +20,9 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
-              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]"),
+              help = "FDR significance threshold ( q < 0.05) [default: %default]"),
   make_option(c("--smd_threshold"), type = "numeric", default = 0.5,
-              help = "SMD clinical meaningfulness threshold (Methods 2.4: |SMD| > 0.5) [default: %default]")
+              help = "SMD clinical meaningfulness threshold (|SMD| > 0.5) [default: %default]")
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -49,7 +49,7 @@ calculate_eta_squared <- function(values, groups) {
   
   eta_sq <- ss_between / ss_total
   
-  # Cohen's criteria (Methods 2.8)
+  # Cohen's criteria 
   if (eta_sq >= 0.14) {
     interpretation <- "Large"
   } else if (eta_sq >= 0.06) {
@@ -64,7 +64,6 @@ calculate_eta_squared <- function(values, groups) {
 }
 
 #' Calculate maximum pairwise Cohen's d (SMD)
-#' Methods 2.4: "|SMD| > 0.5 for clinical meaningfulness"
 calculate_max_smd <- function(values, groups) {
   groups <- factor(groups)
   levels_g <- levels(groups)
@@ -156,9 +155,9 @@ for (i in 1:length(subtype_counts)) {
 cat("\n")
 
 # ==============================================================================
-# Part 2: Feature Group Comparisons (Methods 2.4, 2.8)
+# Part 2: Feature Group Comparisons 
 # ==============================================================================
-cat("[2/5] Feature group comparisons (Methods 2.4, 2.8)...\n")
+cat("[2/5] Feature group comparisons...\n")
 
 # Define feature groups
 feature_groups <- list(
@@ -207,10 +206,10 @@ for (group_name in names(feature_groups)) {
         test_type <- "Kruskal-Wallis"
       }
       
-      # Eta-squared (Methods 2.8)
+      # Eta-squared 
       eta_result <- calculate_eta_squared(test_data[[var]], test_data$Subtype)
       
-      # Max SMD (Methods 2.4)
+      # Max SMD 
       max_smd <- calculate_max_smd(test_data[[var]], test_data$Subtype)
       
       all_results <- rbind(all_results, data.frame(
@@ -262,7 +261,7 @@ for (group_name in names(feature_groups)) {
   }
 }
 
-# FDR correction (Methods 2.4)
+# FDR correction 
 all_results$P_FDR <- p.adjust(all_results$P_Raw, method = "fdr")
 all_results$Significant_FDR <- all_results$P_FDR < opt$fdr_threshold
 
@@ -292,9 +291,9 @@ write.csv(all_results,
 cat("\n")
 
 # ==============================================================================
-# Part 3: Survival Analysis (Methods 2.4)
+# Part 3: Survival Analysis 
 # ==============================================================================
-cat("[3/5] Survival analysis (Methods 2.4)...\n")
+cat("[3/5] Survival analysis ...\n")
 
 survival_completed <- FALSE
 
@@ -479,19 +478,10 @@ write.csv(adni_labeled,
 # Generate summary report
 summary_lines <- c(
   "================================================================================",
-  "ADNI Discovery Analysis Report (Methods 2.4, 2.8 Aligned)",
+  "ADNI Discovery Analysis Report ",
   "================================================================================",
   "",
   sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods Requirements:",
-  sprintf("  Methods 2.4: Benjamini-Hochberg FDR correction (q < %.2f)", opt$fdr_threshold),
-  sprintf("  Methods 2.4: |SMD| > %.1f for clinical meaningfulness", opt$smd_threshold),
-  "  Methods 2.8: Eta-squared effect sizes",
-  "    - η² ≥ 0.01: Small effect",
-  "    - η² ≥ 0.06: Medium effect",
-  "    - η² ≥ 0.14: Large effect",
-  "",
   "--------------------------------------------------------------------------------",
   "Data Summary",
   "--------------------------------------------------------------------------------",
@@ -589,3 +579,4 @@ cat("============================================================\n")
 cat("Step 19: ADNI Discovery Analysis Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
+
