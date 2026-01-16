@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Clinical Assessment Preprocessing (Methods 2.2) - No Premature MICE/Standardization'
+        description='Clinical Assessment Preprocessing '
     )
     parser.add_argument('--data_dir', type=str,
                         default='./ADNI_Raw_Data/Clinical',
@@ -56,8 +56,6 @@ def extract_baseline(df):
 def calculate_age_at_baseline(demographics_df, baseline_date_col='EXAMDATE'):
     """
     Calculate age at baseline visit (not using fixed year).
-    
-    Methods 2.2: Age calculated from baseline examination date
     """
     if 'PTDOBYY' not in demographics_df.columns:
         return None
@@ -92,19 +90,13 @@ def preprocess_clinical(data_dir, output_file, output_dir):
     """
     Main preprocessing function for clinical assessment data.
     
-    Methods 2.2 Implementation:
-    - Load clinical assessments (MMSE, CDR-SB, ADAS-Cog13, FAQ)
-    - Extract baseline visits
-    - Calculate age from baseline date
-    - OUTPUT RAW VALUES (MICE and standardization deferred to Step 7)
-    
     Args:
         data_dir: Directory containing clinical data files
         output_file: Output file path
         output_dir: Output directory
     """
     print("=" * 70)
-    print("Step 3: Clinical Assessment Preprocessing (Methods 2.2)")
+    print("Step 3: Clinical Assessment Preprocessing ")
     print("CORRECTED: No premature MICE/standardization (deferred to Step 7)")
     print("=" * 70)
     
@@ -152,7 +144,7 @@ def preprocess_clinical(data_dir, output_file, output_dir):
     else:
         diag_features = pd.DataFrame()
     
-    # ADAS-Cog13 (Methods 2.2)
+    # ADAS-Cog13 
     if 'adas' in baseline_dict:
         adas_df = baseline_dict['adas']
         adas_col = 'TOTAL13' if 'TOTAL13' in adas_df.columns else 'TOTSCORE'
@@ -161,21 +153,21 @@ def preprocess_clinical(data_dir, output_file, output_dir):
     else:
         adas_features = pd.DataFrame()
     
-    # CDR-SB (Methods 2.2)
+    # CDR-SB 
     if 'cdr' in baseline_dict:
         cdr_df = baseline_dict['cdr']
         cdr_features = cdr_df[['PTID', 'CDRSB']].copy() if 'CDRSB' in cdr_df.columns else pd.DataFrame()
     else:
         cdr_features = pd.DataFrame()
     
-    # FAQ (Methods 2.2)
+    # FAQ 
     if 'faq' in baseline_dict:
         faq_df = baseline_dict['faq']
         faq_features = faq_df[['PTID', 'FAQTOTAL']].copy() if 'FAQTOTAL' in faq_df.columns else pd.DataFrame()
     else:
         faq_features = pd.DataFrame()
     
-    # MMSE (Methods 2.2)
+    # MMSE 
     if 'mmse' in baseline_dict:
         mmse_df = baseline_dict['mmse']
         mmse_col = 'MMSCORE' if 'MMSCORE' in mmse_df.columns else 'MMSE'
@@ -258,15 +250,6 @@ def preprocess_clinical(data_dir, output_file, output_dir):
     print(f"\n  Saved: {output_path}")
     print(f"  Total subjects: {len(clinical_final)}")
     
-    print("\n" + "-" * 70)
-    print("NOTE: Output contains RAW values (no MICE imputation, no standardization)")
-    print("MICE imputation (15 iterations) and Z-score standardization will be")
-    print("applied in Step 7 after train/test split.")
-    print("This ensures Methods 2.3 & 2.6 compliance:")
-    print("  - 'parameters derived exclusively from training set'")
-    print("  - 'MICE model fitted to the training data'")
-    print("-" * 70)
-    
     print("\n" + "=" * 70)
     print("Step 3: Clinical Preprocessing Complete")
     print("=" * 70)
@@ -286,3 +269,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
