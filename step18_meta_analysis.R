@@ -18,9 +18,9 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--i2_moderate"), type = "numeric", default = 50,
-              help = "I² threshold for moderate heterogeneity (Methods 2.7: >50%%) [default: %default]"),
+              help = "I² threshold for moderate heterogeneity"),
   make_option(c("--i2_high"), type = "numeric", default = 75,
-              help = "I² threshold for high heterogeneity (Methods 2.7: >75%%) [default: %default]")
+              help = "I² threshold for high heterogeneity ")
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -70,9 +70,9 @@ print(summary_table)
 cat("\n")
 
 # ==============================================================================
-# Part 2: Random-Effects Meta-Analysis (Methods 2.7)
+# Part 2: Random-Effects Meta-Analysis 
 # ==============================================================================
-cat("[2/6] Random-effects meta-analysis (Methods 2.7)...\n")
+cat("[2/6] Random-effects meta-analysis...\n")
 
 # Perform meta-analysis using DerSimonian-Laird estimator
 meta_result <- metagen(
@@ -98,7 +98,7 @@ tau2_value <- meta_result$tau2
 q_value <- meta_result$Q
 q_pvalue <- meta_result$pval.Q
 
-# Interpret heterogeneity (Methods 2.7)
+# Interpret heterogeneity 
 if (i2_value > opt$i2_high) {
   heterogeneity_level <- "High"
 } else if (i2_value > opt$i2_moderate) {
@@ -150,7 +150,7 @@ dev.off()
 cat("  Saved: step18_fig1_meta_forest.png\n\n")
 
 # ==============================================================================
-# Part 4: Sensitivity Analysis - Leave-One-Out (Methods 2.7)
+# Part 4: Sensitivity Analysis - Leave-One-Out 
 # ==============================================================================
 cat("[4/6] Sensitivity analysis (leave-one-out)...\n")
 
@@ -340,17 +340,8 @@ save(meta_data, meta_result, weight_data, sensitivity_results,
 # Generate summary report
 summary_lines <- c(
   "================================================================================",
-  "Meta-Analysis Report (Methods 2.7 Aligned)",
+  "Meta-Analysis Report ",
   "================================================================================",
-  "",
-  sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods 2.7 Requirements:",
-  "  - Random-effects meta-analysis (DerSimonian-Laird estimator)",
-  sprintf("  - I² heterogeneity thresholds: >%.0f%% moderate, >%.0f%% high", 
-          opt$i2_moderate, opt$i2_high),
-  "  - Forest plots with individual and pooled effects",
-  "  - Sensitivity analyses (leave-one-out)",
   "",
   "--------------------------------------------------------------------------------",
   "Cohort Summary",
@@ -397,7 +388,7 @@ for (i in 1:nrow(sensitivity_results)) {
 summary_lines <- c(summary_lines,
   "",
   "--------------------------------------------------------------------------------",
-  "Interpretation (Methods 2.7)",
+  "Interpretation",
   "--------------------------------------------------------------------------------",
   sprintf("  Heterogeneity level: %s (I² = %.1f%%)", heterogeneity_level, i2_value),
   ifelse(i2_value > opt$i2_high,
@@ -431,3 +422,4 @@ cat("============================================================\n")
 cat("Step 18: Meta-Analysis Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
+
