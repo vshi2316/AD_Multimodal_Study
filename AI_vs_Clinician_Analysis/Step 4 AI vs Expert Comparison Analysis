@@ -25,7 +25,7 @@ option_list <- list(
               default = "./AI_vs_Clinician_Test",
               help = "Output directory [default: %default]"),
   make_option(c("--n_bootstrap"), type = "integer", default = 2000,
-              help = "Number of bootstrap iterations (Methods 2.9: 2000) [default: %default]"),
+              help = "Number of bootstrap iterations  [default: %default]"),
   make_option(c("--figure_dpi"), type = "integer", default = 600,
               help = "Figure DPI for publication [default: %default]"),
   make_option(c("--seed"), type = "integer", default = 2024,
@@ -43,14 +43,14 @@ figures_dir <- file.path(opt$output_dir, "Figures")
 dir.create(figures_dir, showWarnings = FALSE, recursive = TRUE)
 
 cat(strrep("=", 70), "\n")
-cat("Step 4: AI vs Expert Comparison Analysis (Methods 2.9)\n")
+cat("Step 4: AI vs Expert Comparison Analysis \n")
 cat(strrep("=", 70), "\n\n")
 
 # ==============================================================================
-# Methods 2.9: Statistical Functions
+ Statistical Functions
 # ==============================================================================
 
-#' Bootstrap AUC with 95% CI (Methods 2.9: 2000 iterations)
+#' Bootstrap AUC with 95% CI 
 #' @param y_true True labels
 #' @param y_prob Predicted probabilities
 #' @param n_boot Number of bootstrap iterations
@@ -83,7 +83,7 @@ bootstrap_auc_ci <- function(y_true, y_prob, n_boot = 2000) {
   )
 }
 
-#' Hosmer-Lemeshow Goodness-of-Fit Test (Methods 2.9)
+#' Hosmer-Lemeshow Goodness-of-Fit Test 
 #' P-value > 0.05 indicates adequate calibration
 #' @param y_true True labels
 #' @param y_prob Predicted probabilities
@@ -112,7 +112,7 @@ hosmer_lemeshow_test <- function(y_true, y_prob, n_groups = 10) {
   list(chi2 = chi2, df = dof, p_value = p_value)
 }
 
-#' Calculate NRI (Net Reclassification Improvement) (Methods 2.9)
+#' Calculate NRI (Net Reclassification Improvement) 
 #' @param y_true True labels
 #' @param prob_old Old model probabilities
 #' @param prob_new New model probabilities
@@ -151,7 +151,7 @@ calculate_nri <- function(y_true, prob_old, prob_new, thresholds = c(0, 0.10, 0.
   )
 }
 
-#' Calculate IDI (Integrated Discrimination Improvement) (Methods 2.9)
+#' Calculate IDI (Integrated Discrimination Improvement) 
 #' @param y_true True labels
 #' @param prob_old Old model probabilities
 #' @param prob_new New model probabilities
@@ -298,7 +298,7 @@ cat(sprintf("  Final comparison dataset: %d cases\n", nrow(comparison_data)))
 # ==============================================================================
 # Section 1: AUC Analysis with Bootstrap CI and DeLong Test
 # ==============================================================================
-cat("\n[3/8] AUC Analysis (Methods 2.9: Bootstrap %d iterations)\n", opt$n_bootstrap)
+cat("\n[3/8] AUC Analysis ", opt$n_bootstrap)
 cat(strrep("-", 70), "\n")
 
 # ROC curves
@@ -306,7 +306,7 @@ roc_ai <- roc(comparison_data$AD_Conversion, comparison_data$AI_Probability, qui
 roc_expert_s1 <- roc(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, quiet = TRUE)
 roc_expert_s2 <- roc(comparison_data$AD_Conversion, comparison_data$Expert_Stage2_Prob, quiet = TRUE)
 
-# Bootstrap AUC CI (Methods 2.9: 2000 iterations)
+# Bootstrap AUC CI 
 cat(sprintf("\n  Calculating bootstrap AUC CI (%d iterations)...\n", opt$n_bootstrap))
 auc_ai_boot <- bootstrap_auc_ci(comparison_data$AD_Conversion, comparison_data$AI_Probability, opt$n_bootstrap)
 auc_s1_boot <- bootstrap_auc_ci(comparison_data$AD_Conversion, comparison_data$Expert_Stage1_Prob, opt$n_bootstrap)
@@ -388,7 +388,7 @@ cat(sprintf("    Expert Stage 2:  %.4f\n", brier_s2))
 # ==============================================================================
 # Section 3: Inter-Rater Reliability (ICC and Fleiss' Kappa)
 # ==============================================================================
-cat("\n[5/8] Inter-Rater Reliability (Methods 2.9)\n")
+cat("\n[5/8] Inter-Rater Reliability ")
 cat(strrep("-", 70), "\n")
 
 # Prepare wide format for ICC
@@ -462,9 +462,9 @@ if ("Stage1_Risk_Level" %in% names(expert_pred) || "Stage1_Prob" %in% names(expe
 }
 
 # ==============================================================================
-# Section 4: NRI and IDI (Methods 2.9)
+# Section 4: NRI and IDI 
 # ==============================================================================
-cat("\n[6/8] NRI and IDI Analysis (Methods 2.9)\n")
+cat("\n[6/8] NRI and IDI Analysis \n")
 cat(strrep("-", 70), "\n")
 
 # NRI: Expert Stage 2 vs Stage 1 (MRI incremental value)
@@ -635,7 +635,7 @@ p_dca <- ggplot(dca_data, aes(x = Threshold, y = Net_Benefit, color = Model, lin
 ggsave(file.path(figures_dir, "DCA_Plot.png"), p_dca, 
        width = 10, height = 7, dpi = opt$figure_dpi)
 
-# 7.4 Bland-Altman Plot (Methods 2.9: Systematic Bias Detection)
+# 7.4 Bland-Altman Plot 
 cat("  Creating Bland-Altman plots...\n")
 
 create_bland_altman <- function(method1, method2, name1, name2) {
@@ -693,7 +693,7 @@ combined_plot <- grid.arrange(
   p_cal + theme(legend.position = "bottom", legend.direction = "horizontal"),
   p_dca + theme(legend.position = "bottom", legend.direction = "horizontal"),
   ncol = 3,
-  top = "AI vs Expert Comparison: Performance Metrics (Methods 2.9)"
+  top = "AI vs Expert Comparison: Performance Metrics"
 )
 
 ggsave(file.path(figures_dir, "Combined_Performance_Panel.png"), combined_plot,
@@ -793,7 +793,6 @@ cat("\n  Generating comprehensive summary report...\n")
 report_lines <- c(
   "================================================================================",
   "AI vs Expert Comparison Analysis - Summary Report",
-  "Methods 2.9 Compliance",
   "================================================================================",
   "",
   sprintf("Analysis Date: %s", Sys.Date()),
@@ -908,8 +907,6 @@ report_lines <- c(report_lines,
           mean(ba_s1_s2$Difference), ba_s1_s2$Lower_LoA[1], ba_s1_s2$Upper_LoA[1]),
   "",
   "================================================================================",
-  "METHODS 2.9 COMPLIANCE CHECKLIST",
-  "================================================================================",
   sprintf("[%s] Bootstrap 2000 iterations for AUC CI", ifelse(opt$n_bootstrap >= 2000, "X", " ")),
   "[X] DeLong test for AUC comparison",
   "[X] Hosmer-Lemeshow calibration test",
@@ -956,7 +953,6 @@ cat(strrep("=", 70), "\n")
 cat("Step 4: AI vs Expert Comparison Analysis Complete\n")
 cat(strrep("=", 70), "\n\n")
 
-cat("Methods 2.9 Compliance Summary:\n")
 cat(sprintf("  [X] Bootstrap AUC CI: %d iterations\n", opt$n_bootstrap))
 cat("  [X] DeLong test for AUC comparison\n")
 cat("  [X] Hosmer-Lemeshow calibration test\n")
@@ -983,3 +979,4 @@ cat(sprintf("  %s\n", figures_dir))
 
 cat("\n")
 cat(strrep("=", 70), "\n")
+
