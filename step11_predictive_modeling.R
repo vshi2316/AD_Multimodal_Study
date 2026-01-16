@@ -27,9 +27,9 @@ option_list <- list(
   make_option(c("--output_dir"), type = "character", default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--n_mice"), type = "integer", default = 5,
-              help = "Number of MICE imputation datasets (Methods 2.9) [default: %default]"),
+              help = "Number of MICE imputation datasets "),
   make_option(c("--n_bootstrap"), type = "integer", default = 2000,
-              help = "Number of bootstrap iterations for CI (Methods 2.9) [default: %default]"),
+              help = "Number of bootstrap iterations for CI "),
   make_option(c("--cv_folds"), type = "integer", default = 10,
               help = "Number of cross-validation folds [default: %default]")
 )
@@ -40,19 +40,14 @@ opt <- parse_args(opt_parser)
 # Create output directory
 dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
 
-# ==============================================================================
-# Methods 2.9: Calibration Functions
-# ==============================================================================
 
 #' Calculate Brier Score
-#' Methods 2.9: "The Brier score was calculated to quantify the overall 
 #' probabilistic prediction accuracy"
 calculate_brier_score <- function(actual, predicted_prob) {
   mean((predicted_prob - actual)^2)
 }
 
 #' Hosmer-Lemeshow Test
-#' Methods 2.9: "Model calibration was rigorously evaluated using calibration 
 #' plots and the Hosmer-Lemeshow goodness-of-fit test, where a P-value > 0.05 
 #' indicates adequate calibration"
 hosmer_lemeshow_test <- function(actual, predicted_prob, g = 10) {
@@ -93,7 +88,7 @@ create_calibration_plot <- function(actual, predicted_prob, n_bins = 10, title =
     scale_size_continuous(name = "N samples") +
     labs(
       title = title,
-      subtitle = "Methods 2.9: Hosmer-Lemeshow calibration assessment",
+      subtitle = "Hosmer-Lemeshow calibration assessment",
       x = "Mean Predicted Probability",
       y = "Observed Proportion"
     ) +
@@ -197,21 +192,18 @@ if (length(high_missing_features) > 0) {
 
 cat(sprintf("  Features for modeling: %d\n", ncol(feature_matrix)))
 
-# ==============================================================================
-# Methods 2.9: MICE Multiple Imputation (5 datasets, Rubin's rules)
-# ==============================================================================
-cat("\n[3/8] MICE Multiple Imputation (Methods 2.9)...\n")
+cat("\n[3/8] MICE Multiple Imputation ...\n")
 cat(sprintf("  Generating %d imputed datasets...\n", opt$n_mice))
 
 if (any(is.na(feature_matrix))) {
   set.seed(42)
   
-  # MICE imputation with 5 datasets (Methods 2.9)
+  # MICE imputation with 5 datasets 
   mice_obj <- mice(
     feature_matrix, 
     m = opt$n_mice,           # 5 imputed datasets
     method = "pmm",           # Predictive mean matching
-    maxit = 15,               # 15 iterations (Methods 2.9 mentions 15)
+    maxit = 15,               # 15 iterations 
     seed = 42,
     printFlag = FALSE
   )
@@ -417,10 +409,7 @@ models_list <- list(
   "XGBoost" = model_xgb
 )
 
-# ==============================================================================
-# Methods 2.9: Model Evaluation with Bootstrap CI and Calibration
-# ==============================================================================
-cat("\n[7/8] Model evaluation with bootstrap CI and calibration (Methods 2.9)...\n")
+cat("\n[7/8] Model evaluation with bootstrap CI and calibration ...\n")
 cat(sprintf("  Running %d bootstrap iterations for 95%% CI...\n", opt$n_bootstrap))
 
 model_comparison <- data.frame()
@@ -444,7 +433,7 @@ for (model_name in names(models_list)) {
   pred_probs <- predict(model, newdata = modeling_data, type = "prob")$Converter
   actual <- as.numeric(modeling_data$Outcome == "Converter")
   
-  # Bootstrap for 95% CI (Methods 2.9: 2000 iterations)
+  # Bootstrap for 95% CI 
   set.seed(42)
   boot_aucs <- numeric(opt$n_bootstrap)
   
@@ -471,10 +460,10 @@ for (model_name in names(models_list)) {
   auc_ci_lower <- quantile(boot_aucs, 0.025)
   auc_ci_upper <- quantile(boot_aucs, 0.975)
   
-  # Brier Score (Methods 2.9)
+  # Brier Score 
   brier_score <- calculate_brier_score(actual, pred_probs)
   
-  # Hosmer-Lemeshow Test (Methods 2.9)
+  # Hosmer-Lemeshow Test
   hl_result <- hosmer_lemeshow_test(actual, pred_probs)
   
   model_comparison <- rbind(model_comparison, data.frame(
@@ -607,7 +596,6 @@ cat("\n========================================================================\
 cat("Predictive Modeling Complete!\n")
 cat("========================================================================\n\n")
 
-cat("Methods 2.9 Compliance:\n")
 cat(sprintf("  ✓ MICE multiple imputation: %d datasets\n", opt$n_mice))
 cat("  ✓ Rubin's rules for combining imputed results\n")
 cat(sprintf("  ✓ Bootstrap CI: %d iterations\n", opt$n_bootstrap))
@@ -637,3 +625,4 @@ cat("  - Calibration_Plot_Best_Model.png\n")
 cat("  - Model_Comparison_AUC.png\n")
 
 cat("\n========================================================================\n")
+
