@@ -14,7 +14,7 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
-              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]")
+              help = "FDR significance threshold ")
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -96,7 +96,7 @@ for (i in 1:length(subtype_dist)) {
 cat("\n")
 
 # ==============================================================================
-# Helper Function: Interpret Eta-squared (Methods 2.8)
+# Helper Function: Interpret Eta-squared 
 # ==============================================================================
 interpret_eta_squared <- function(eta2) {
   if (is.na(eta2)) return("NA")
@@ -107,9 +107,9 @@ interpret_eta_squared <- function(eta2) {
 }
 
 # ==============================================================================
-# Part 2: Clinical Homogeneity Test (Methods 2.8)
+# Part 2: Clinical Homogeneity Test 
 # ==============================================================================
-cat("[2/6] Clinical homogeneity test (Methods 2.8)...\n")
+cat("[2/6] Clinical homogeneity test ...\n")
 
 clinical_homogeneity <- data.frame()
 
@@ -136,7 +136,7 @@ for (feat in clinical_features) {
   ))
 }
 
-# FDR correction (Methods 2.4)
+# FDR correction 
 clinical_homogeneity$P_FDR <- p.adjust(clinical_homogeneity$P_Raw, method = "fdr")
 clinical_homogeneity$Significant_FDR <- clinical_homogeneity$P_FDR < opt$fdr_threshold
 
@@ -169,7 +169,7 @@ p_clinical <- clinical_homogeneity %>%
                     name = "FDR < 0.05") +
   coord_flip() +
   labs(
-    title = "Clinical Homogeneity Across Endotypes (Methods 2.8)",
+    title = "Clinical Homogeneity Across Endotypes ",
     subtitle = "Dashed lines: Cohen's η² thresholds (0.01 small, 0.06 medium, 0.14 large)",
     x = "Clinical Feature", 
     y = "Effect Size (η²)"
@@ -183,9 +183,9 @@ ggsave(file.path(opt$output_dir, "Figure_Clinical_Homogeneity.png"),
 cat("  Saved: Figure_Clinical_Homogeneity.png\n\n")
 
 # ==============================================================================
-# Part 3: MRI Heterogeneity Test (Methods 2.4, 2.8)
+# Part 3: MRI Heterogeneity Test 
 # ==============================================================================
-cat("[3/6] MRI heterogeneity test (Methods 2.4, 2.8)...\n")
+cat("[3/6] MRI heterogeneity test")
 
 mri_heterogeneity <- data.frame()
 
@@ -218,7 +218,7 @@ for (feat in mri_features) {
   ))
 }
 
-# FDR correction (Methods 2.4)
+# FDR correction 
 mri_heterogeneity$P_FDR <- p.adjust(mri_heterogeneity$P_Raw, method = "fdr")
 mri_heterogeneity$Significant_FDR <- mri_heterogeneity$P_FDR < opt$fdr_threshold
 
@@ -245,7 +245,7 @@ p_mri <- mri_heterogeneity %>%
                     name = "FDR < 0.05") +
   coord_flip() +
   labs(
-    title = "MRI Heterogeneity Across Endotypes (Methods 2.4, 2.8)",
+    title = "MRI Heterogeneity Across Endotypes ",
     subtitle = "Dashed lines: Cohen's η² thresholds (0.01 small, 0.06 medium, 0.14 large)",
     x = "MRI Feature", 
     y = "Effect Size (η²)"
@@ -259,9 +259,9 @@ ggsave(file.path(opt$output_dir, "Figure_MRI_Heterogeneity.png"),
 cat("  Saved: Figure_MRI_Heterogeneity.png\n\n")
 
 # ==============================================================================
-# Part 4: Stage Independence Test (Methods 2.8 - ANCOVA)
+# Part 4: Stage Independence Test 
 # ==============================================================================
-cat("[4/6] Stage independence test (ANCOVA, Methods 2.8)...\n")
+cat("[4/6] Stage independence test (ANCOVA)...\n")
 
 stage_independence <- data.frame()
 
@@ -333,7 +333,7 @@ p_stage <- stage_independence %>%
                                "Adjusted (MMSE + Age)" = "#8064A2")) +
   coord_flip() +
   labs(
-    title = "Stage Independence of Endotype Markers (Methods 2.8)",
+    title = "Stage Independence of Endotype Markers ",
     subtitle = "ANCOVA: Effect sizes before and after adjusting for disease stage",
     x = "MRI Feature", 
     y = "Effect Size (η²)", 
@@ -348,9 +348,9 @@ ggsave(file.path(opt$output_dir, "Figure_Stage_Independence.png"),
 cat("  Saved: Figure_Stage_Independence.png\n\n")
 
 # ==============================================================================
-# Part 5: Disproportionate Atrophy Analysis (Methods 2.8)
+# Part 5: Disproportionate Atrophy Analysis 
 # ==============================================================================
-cat("[5/6] Disproportionate atrophy analysis (W-score residuals, Methods 2.8)...\n")
+cat("[5/6] Disproportionate atrophy analysis (W-score residuals)...\n")
 
 disprop_stats_list <- list()
 disprop_residuals_df <- data.frame()
@@ -441,7 +441,7 @@ if (nrow(disprop_residuals_df) > 0) {
     scale_fill_manual(values = c("1" = "#95B3D7", "2" = "#8064A2", "3" = "#C0504D"),
                       name = "Subtype") +
     labs(
-      title = "Topological Specificity (Disproportionate Atrophy, Methods 2.8)",
+      title = "Topological Specificity (Disproportionate Atrophy)",
       subtitle = "W-score residuals after controlling for Global Atrophy, Age, and Sex",
       y = "Standardized Residuals (W-score)",
       x = "Brain Region"
@@ -463,20 +463,10 @@ cat("[6/6] Generating summary report...\n\n")
 
 summary_lines <- c(
   "================================================================================",
-  "Neuroimaging Endotype Characterization Report (Methods 2.4, 2.8 Aligned)",
+  "Neuroimaging Endotype Characterization Report",
   "================================================================================",
   "",
   sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods Requirements:",
-  sprintf("  Methods 2.4: Benjamini-Hochberg FDR correction (q < %.2f)", opt$fdr_threshold),
-  "  Methods 2.8: Eta-squared effect sizes with Cohen's criteria:",
-  "    - η² ≥ 0.01: Small effect",
-  "    - η² ≥ 0.06: Medium effect",
-  "    - η² ≥ 0.14: Large effect",
-  "  Methods 2.8: ANCOVA for stage-independent verification",
-  "  Methods 2.8: W-score residuals for disproportionate atrophy",
-  "",
   "--------------------------------------------------------------------------------",
   "Data Summary",
   "--------------------------------------------------------------------------------",
@@ -585,5 +575,6 @@ cat("============================================================\n")
 cat("Step 22: Neuroimaging Endotype Characterization Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
+
 
 
