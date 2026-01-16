@@ -17,7 +17,7 @@ option_list <- list(
               default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--n_bootstrap"), type = "integer", default = 2000,
-              help = "Number of bootstrap iterations (Methods 2.9: 2000) [default: %default]"),
+              help = "Number of bootstrap iterations "),
   make_option(c("--train_ratio"), type = "numeric", default = 0.7,
               help = "Training set ratio [default: %default]"),
   make_option(c("--ptau_col"), type = "character", default = "pTau217_Primary",
@@ -98,8 +98,8 @@ cat(sprintf("Test set: %d (events=%d, %.1f%%)\n",
             sum(habs_test$AD_Conversion == 1),
             100 * mean(habs_test$AD_Conversion == 1)))
 
-# Firth logistic regression (Methods 2.9)
-cat("\nFitting Firth logistic regression models (Methods 2.9)...\n")
+# Firth logistic regression 
+cat("\nFitting Firth logistic regression models ...\n")
 
 model_base <- logistf(
   AD_Conversion ~ Age + Gender + APOE4_Positive + MMSE_Baseline,
@@ -331,8 +331,8 @@ cat(sprintf("\nEvents probability improvement: %.4f\n", events_improvement))
 cat(sprintf("Non-events probability improvement: %.4f\n", nonevents_improvement))
 cat(sprintf("IDI: %.4f (%.2f%%)\n", idi_value, 100 * idi_value))
 
-# Bootstrap CI for IDI (Methods 2.9: 2000 iterations)
-cat(sprintf("\nRunning bootstrap for IDI CI (%d iterations, Methods 2.9)...\n", opt$n_bootstrap))
+# Bootstrap CI for IDI 
+cat(sprintf("\nRunning bootstrap for IDI CI (%d iterations)...\n", opt$n_bootstrap))
 
 set.seed(42)
 idi_bootstrap <- numeric(opt$n_bootstrap)
@@ -575,7 +575,7 @@ p5 <- ggplot(nri_data, aes(x = reorder(Metric, Value), y = Value,
   scale_fill_manual(values = c("TRUE" = "#009E73", "FALSE" = "#E69F00")) +
   labs(
     title = "NRI and IDI Improvements",
-    subtitle = sprintf("Bootstrap CI based on %d iterations (Methods 2.9)", opt$n_bootstrap),
+    subtitle = sprintf("Bootstrap CI based on %d iterations ", opt$n_bootstrap),
     x = NULL,
     y = "Value"
   ) +
@@ -654,17 +654,8 @@ write.csv(nri_data,
 # Generate summary report
 summary_lines <- c(
   "================================================================================",
-  "HABS External Validation Report (Methods 2.9 Aligned)",
+  "HABS External Validation Report ",
   "================================================================================",
-  "",
-  sprintf("Generated: %s", Sys.time()),
-  "",
-  "Methods 2.9 Requirements:",
-  sprintf("  - Bootstrap iterations: %d", opt$n_bootstrap),
-  "  - Firth logistic regression for rare events",
-  "  - NRI (Net Reclassification Improvement)",
-  "  - IDI (Integrated Discrimination Improvement)",
-  "  - Decision Curve Analysis (DCA)",
   "",
   "--------------------------------------------------------------------------------",
   "Data Summary",
@@ -752,3 +743,4 @@ cat("Step 16: HABS External Validation Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report saved: %s\n", report_path))
 cat(sprintf("Output directory: %s\n", opt$output_dir))
+
