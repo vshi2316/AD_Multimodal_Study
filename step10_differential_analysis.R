@@ -23,9 +23,9 @@ option_list <- list(
   make_option(c("--output_dir"), type = "character", default = "./results",
               help = "Output directory [default: %default]"),
   make_option(c("--fdr_threshold"), type = "numeric", default = 0.05,
-              help = "FDR significance threshold (Methods 2.4: q < 0.05) [default: %default]"),
+              help = "FDR significance threshold ( q < 0.05) [default: %default]"),
   make_option(c("--smd_threshold"), type = "numeric", default = 0.5,
-              help = "SMD clinical meaningfulness threshold (Methods 2.4: |SMD| > 0.5) [default: %default]")
+              help = "SMD clinical meaningfulness threshold (|SMD| > 0.5) [default: %default]")
 )
 
 opt_parser <- OptionParser(option_list = option_list)
@@ -34,12 +34,7 @@ opt <- parse_args(opt_parser)
 # Create output directory
 dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
 
-# ==============================================================================
-# Methods 2.8: Effect Size Functions
-# ==============================================================================
-
 #' Calculate Cohen's d (Standardized Mean Difference)
-#' Methods 2.4: "requiring |SMD| > 0.5 for clinical meaningfulness"
 calculate_cohens_d <- function(group1, group2) {
   n1 <- length(group1)
   n2 <- length(group2)
@@ -57,10 +52,6 @@ calculate_cohens_d <- function(group1, group2) {
   return(cohens_d)
 }
 
-#' Calculate Eta-squared effect size
-#' Methods 2.8: "Eta-squared (η²) quantifies effect sizes: between-group sum 
-#' of squares divided by total sum of squares, with 0.01, 0.06, and 0.14 
-#' representing small, medium, and significant effects per Cohen's criteria"
 calculate_eta_squared <- function(values, groups) {
   values <- as.numeric(values)
   groups <- as.factor(groups)
@@ -164,7 +155,6 @@ if (length(modalities) == 0) {
 # Part 1: limma Differential Analysis with FDR Correction
 # ==============================================================================
 cat("\n[2/6] limma Differential Expression Analysis...\n")
-cat("  Applying Benjamini-Hochberg FDR correction (Methods 2.4)\n\n")
 
 limma_results <- list()
 
@@ -245,7 +235,6 @@ for (modality_name in names(modalities)) {
     }
   }
   
-  # Methods 2.4: FDR q < 0.05 AND |SMD| > 0.5 for clinical meaningfulness
   results$Clinically_Meaningful <- abs(results$SMD) > opt$smd_threshold
   
   significant <- results %>%
@@ -276,8 +265,6 @@ for (modality_name in names(modalities)) {
 # Part 2: Comprehensive SMD Analysis with FDR Correction
 # ==============================================================================
 cat("\n[3/6] Standardized Mean Difference (SMD) Analysis...\n")
-cat("  Methods 2.4: Benjamini-Hochberg correction (q < 0.05)\n")
-cat("  Methods 2.4: Clinical meaningfulness threshold |SMD| > 0.5\n\n")
 
 # Merge all modality data
 all_data <- cluster_results
@@ -316,7 +303,7 @@ for (feat in feature_cols) {
   high_risk_vals <- values[all_data$Risk_Group == "HighRisk"]
   low_risk_vals <- values[all_data$Risk_Group == "LowRisk"]
   
-  # Wilcoxon rank-sum test (Methods 2.4)
+  # Wilcoxon rank-sum test 
   wilcox_test <- tryCatch(
     wilcox.test(high_risk_vals, low_risk_vals),
     error = function(e) list(p.value = NA)
@@ -353,7 +340,7 @@ for (feat in feature_cols) {
   ))
 }
 
-# Apply Benjamini-Hochberg FDR correction (Methods 2.4)
+# Apply Benjamini-Hochberg FDR correction 
 all_smd_results$P_adj_FDR <- p.adjust(all_smd_results$P_Value_Wilcoxon, method = "BH")
 
 # Determine significance
@@ -512,7 +499,7 @@ if (nrow(all_smd_results) > 0) {
              color = "red", size = 3) +
     labs(
       title = "Distribution of Effect Sizes (|SMD|)",
-      subtitle = "Methods 2.4: |SMD| > 0.5 required for clinical meaningfulness",
+      subtitle = "|SMD| > 0.5 required for clinical meaningfulness",
       x = "|Standardized Mean Difference|",
       y = "Count"
     ) +
@@ -559,17 +546,12 @@ print(summary_report)
 
 write.csv(summary_report, file.path(opt$output_dir, "DiffExpr_Summary_FDR.csv"), row.names = FALSE)
 
-# ==============================================================================
-# Part 5: Methods Compliance Check
-# ==============================================================================
-cat("\n[6/6] Methods Compliance Verification...\n\n")
+cat("\n[6/6] Compliance Verification...\n\n")
 
-cat("Methods 2.4 Compliance:\n")
 cat(sprintf("  ✓ Benjamini-Hochberg FDR correction applied (q < %.2f)\n", opt$fdr_threshold))
 cat(sprintf("  ✓ SMD clinical meaningfulness threshold (|SMD| > %.1f)\n", opt$smd_threshold))
 cat("  ✓ Wilcoxon rank-sum tests for continuous variables\n")
 
-cat("\nMethods 2.8 Compliance:\n")
 cat("  ✓ Eta-squared effect sizes calculated\n")
 cat("  ✓ Cohen's criteria applied (0.01 small, 0.06 medium, 0.14 large)\n")
 cat("  ✓ Cohen's d (SMD) calculated for all features\n")
@@ -591,11 +573,4 @@ cat("  - SMD_Significant_Features_FDR.csv\n")
 cat("  - Top30_SMD_Features_FDR.png\n")
 cat("  - Effect_Size_Distribution.png\n")
 cat("  - DiffExpr_Summary_FDR.csv\n")
-
-cat("\n========================================================================\n")
-cat("Methods Alignment Summary:\n")
-cat("  - FDR threshold: q < 0.05 (Methods 2.4)\n")
-cat("  - SMD threshold: |SMD| > 0.5 (Methods 2.4)\n")
-cat("  - Eta-squared with Cohen's criteria (Methods 2.8)\n")
-cat("========================================================================\n")
 
