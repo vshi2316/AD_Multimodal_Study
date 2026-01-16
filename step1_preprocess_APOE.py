@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='APOE Genotype Preprocessing (Methods 2.2)'
+        description='APOE Genotype Preprocessing'
     )
     parser.add_argument('--input_file', type=str,
                         default='./ADNI_Raw_Data/APOE/ApoE_Genotyping_Results.csv',
@@ -41,8 +41,6 @@ def extract_apoe4_features(genotype):
     """
     Extract APOE ε4 features from genotype string.
     
-    Methods 2.2: "individuals carrying ≥1 ε4 allele were classified as APOE ε4-positive"
-    
     Args:
         genotype: APOE genotype string (e.g., "3/4", "4/4", "3/3")
     
@@ -61,7 +59,7 @@ def preprocess_apoe(input_file, output_file, output_dir):
     """
     Main preprocessing function for APOE genotype data.
     
-    Methods 2.2 Implementation:
+    Implementation:
     - Load APOE genotyping results
     - Extract APOE ε4 dosage (0, 1, or 2 alleles)
     - Classify APOE ε4 status (positive if ≥1 ε4 allele)
@@ -72,7 +70,7 @@ def preprocess_apoe(input_file, output_file, output_dir):
         output_dir: Output directory
     """
     print("=" * 70)
-    print("Step 1: APOE Genotype Preprocessing (Methods 2.2)")
+    print("Step 1: APOE Genotype Preprocessing")
     print("=" * 70)
     
     # Create output directory
@@ -117,7 +115,7 @@ def preprocess_apoe(input_file, output_file, output_dir):
     print(f"  After removing missing: {len(apoe_clean)}")
     
     # Extract APOE4 features
-    print("\n[3/4] Extracting APOE ε4 features (Methods 2.2)...")
+    print("\n[3/4] Extracting APOE ε4 features...")
     apoe_features = apoe_clean['GENOTYPE'].apply(extract_apoe4_features)
     apoe_clean[['APOE4_DOSAGE', 'APOE4_STATUS']] = pd.DataFrame(
         apoe_features.tolist(), index=apoe_clean.index
@@ -169,3 +167,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
