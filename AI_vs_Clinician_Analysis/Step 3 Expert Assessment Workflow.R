@@ -18,7 +18,7 @@ option_list <- list(
               default = "./AI_vs_Clinician_Test",
               help = "Output directory [default: %default]"),
   make_option(c("--n_experts"), type = "integer", default = 5,
-              help = "Number of expert assessors (Methods 2.6: 5) [default: %default]"),
+              help = "Number of expert assessors  [default: %default]"),
   make_option(c("--seed"), type = "integer", default = 2024,
               help = "Random seed [default: %default]")
 )
@@ -101,7 +101,6 @@ create_assessment_form <- function(case_data, output_path) {
   # Build form content
   form_lines <- c(
     "EXPERT ASSESSMENT FORM - AD CONVERSION PREDICTION",
-    "Methods 2.6: Two-Stage Assessment Protocol",
     strrep("=", 60),
     "",
     sprintf("Case ID: %s", case_info$CaseID),
@@ -319,7 +318,6 @@ cat("\n[4/4] Generating expert assessor instructions...\n")
 instructions <- c(
   "INSTRUCTIONS FOR EXPERT ASSESSORS",
   "AI vs Clinician Comparison Study",
-  "Methods 2.6: Two-Stage Assessment Protocol",
   strrep("=", 60),
   "",
   "Dear Expert Assessor,",
@@ -334,7 +332,6 @@ instructions <- c(
   sprintf("Number of experts: %d", opt$n_experts),
   "Estimated time per case: 5-10 minutes",
   "",
-  "ASSESSMENT PROCEDURE (Methods 2.6)",
   strrep("-", 40),
   "For each case, complete a TWO-STAGE assessment:",
   "",
@@ -458,7 +455,6 @@ if (file.exists(excel_template_file)) {
 cat("\n" + strrep("=", 60) + "\n")
 cat("Step 3 Complete\n")
 cat(strrep("=", 60) + "\n")
-cat("\nMethods 2.6 Compliance:\n")
 cat("  ✓ Two-stage assessment protocol implemented\n")
 cat("  ✓ Stage 1: Clinical + Biomarkers (no MRI)\n")
 cat("  ✓ Stage 2: Clinical + Biomarkers + MRI\n")
@@ -468,3 +464,4 @@ cat("\nOutput files:\n")
 cat(sprintf("  - %s (assessment forms)\n", forms_dir))
 cat(sprintf("  - %s\n", excel_template_file))
 cat(sprintf("  - %s\n", instructions_file))
+
