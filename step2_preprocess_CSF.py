@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='CSF Biomarker Preprocessing (Methods 2.2) - No Premature Standardization'
+        description='CSF Biomarker Preprocessing'
     )
     parser.add_argument('--roche_file', type=str,
                         default='./ADNI_Raw_Data/CSF/CSF_Roche_Elecsys.csv',
@@ -44,8 +44,6 @@ def harmonize_platforms(roche_data, alzbio3_data):
     """
     Harmonize CSF measurements across Roche Elecsys and AlzBio3 platforms.
     
-    Methods 2.2: Platform harmonization using validated conversion algorithms
-    
     Args:
         roche_data: DataFrame with Roche Elecsys measurements
         alzbio3_data: DataFrame with AlzBio3 measurements
@@ -58,7 +56,7 @@ def harmonize_platforms(roche_data, alzbio3_data):
     roche_available = [c for c in roche_cols if c in roche_data.columns]
     roche_core = roche_data[roche_available].copy()
     
-    # Calculate Aβ42/Aβ40 ratio (primary amyloid marker per Methods 2.2)
+    # Calculate Aβ42/Aβ40 ratio (primary amyloid marker per
     if 'ABETA42' in roche_core.columns and 'ABETA40' in roche_core.columns:
         roche_core['ABETA42_ABETA40_RATIO'] = roche_core['ABETA42'] / roche_core['ABETA40']
     
@@ -96,13 +94,6 @@ def harmonize_platforms(roche_data, alzbio3_data):
 def preprocess_csf(roche_file, alzbio3_file, output_file, output_dir):
     """
     Main preprocessing function for CSF biomarker data.
-    
-    Methods 2.2 Implementation:
-    - Load CSF data from both platforms
-    - Harmonize measurements across platforms
-    - Calculate Aβ42/Aβ40 ratio
-    - OUTPUT RAW VALUES (standardization deferred to Step 7)
-    
     Args:
         roche_file: Path to Roche Elecsys CSV
         alzbio3_file: Path to AlzBio3 CSV
@@ -110,7 +101,7 @@ def preprocess_csf(roche_file, alzbio3_file, output_file, output_dir):
         output_dir: Output directory
     """
     print("=" * 70)
-    print("Step 2: CSF Biomarker Preprocessing (Methods 2.2)")
+    print("Step 2: CSF Biomarker Preprocessing 
     print("CORRECTED: No premature standardization (deferred to Step 7)")
     print("=" * 70)
     
@@ -125,11 +116,11 @@ def preprocess_csf(roche_file, alzbio3_file, output_file, output_dir):
     print(f"  AlzBio3: {len(alzbio3)} records")
     
     # Harmonize platforms
-    print("\n[2/4] Harmonizing platforms (Methods 2.2)...")
+    print("\n[2/4] Harmonizing platforms 
     csf_merged = harmonize_platforms(roche, alzbio3)
     print(f"  Merged records: {len(csf_merged)}")
     
-    # Select final features (Methods 2.2: Aβ42/Aβ40 ratio, p-tau181, total tau)
+    # Select final features ( Aβ42/Aβ40 ratio, p-tau181, total tau)
     print("\n[3/4] Selecting CSF biomarkers...")
     feature_cols = ['PTAU181', 'ABETA42_ABETA40_RATIO', 'TAU_TOTAL']
     
@@ -164,12 +155,6 @@ def preprocess_csf(roche_file, alzbio3_file, output_file, output_dir):
     print(f"\n  Saved: {output_path}")
     print(f"  Total subjects: {len(csf_final)}")
     
-    print("\n" + "-" * 70)
-    print("NOTE: Output contains RAW values (no standardization)")
-    print("Z-score standardization will be applied in Step 7 after train/test split")
-    print("This ensures Methods 2.3 compliance: 'parameters derived exclusively from training set'")
-    print("-" * 70)
-    
     print("\n" + "=" * 70)
     print("Step 2: CSF Preprocessing Complete")
     print("=" * 70)
@@ -190,3 +175,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
