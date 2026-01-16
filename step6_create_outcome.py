@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Outcome Variable Creation (Methods 2.2)'
+        description='Outcome Variable Creation'
     )
     parser.add_argument('--input_file', type=str,
                         default='./ADNI_Raw_Data/Clinical/Diagnostic_Summary.csv',
@@ -25,7 +25,7 @@ def parse_args():
                         default='./processed_data',
                         help='Output directory')
     parser.add_argument('--followup_months', type=int, default=36,
-                        help='Follow-up period in months (Methods 2.2: 36)')
+                        help='Follow-up period in months ')
     return parser.parse_args()
 
 
@@ -117,12 +117,7 @@ def calculate_followup_time(baseline_date, event_date):
 def create_outcome(input_file, output_file, output_dir, followup_months=36):
     """
     Main function to create outcome variables.
-    
-    Methods 2.2 Implementation:
-    - Identify baseline MCI patients
-    - Track conversion to AD within follow-up period
-    - Calculate time to event/censoring
-    
+
     Args:
         input_file: Path to diagnostic summary CSV
         output_file: Output file path
@@ -130,7 +125,7 @@ def create_outcome(input_file, output_file, output_dir, followup_months=36):
         followup_months: Follow-up period in months
     """
     print("=" * 70)
-    print("Step 6: Outcome Variable Creation (Methods 2.2)")
+    print("Step 6: Outcome Variable Creation ")
     print("=" * 70)
     
     # Create output directory
@@ -284,3 +279,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
