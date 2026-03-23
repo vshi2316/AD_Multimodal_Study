@@ -1,5 +1,4 @@
 """
-Step 9A: External cohort projection into the ADNI VAE latent space.
 
 This script applies the ADNI-trained encoder to an external cohort and assigns
 subtypes using Euclidean distance to discovery-cohort subtype centroids.
