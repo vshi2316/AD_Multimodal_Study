@@ -1,5 +1,4 @@
 """
-Step 9B: Biomarker validation for VAE-derived subtypes.
 
 Implements AT composite and neuroinflammation analyses described in the
 manuscript using discovery-cohort CSF biomarkers.
