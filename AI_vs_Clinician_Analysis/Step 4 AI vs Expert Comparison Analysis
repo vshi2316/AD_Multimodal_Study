@@ -47,10 +47,8 @@ cat("Step 4: AI vs Expert Comparison Analysis \n")
 cat(strrep("=", 70), "\n\n")
 
 # ==============================================================================
- Statistical Functions
+# Statistical Functions
 # ==============================================================================
-
-#' Bootstrap AUC with 95% CI 
 #' @param y_true True labels
 #' @param y_prob Predicted probabilities
 #' @param n_boot Number of bootstrap iterations
@@ -240,6 +238,17 @@ if (!file.exists(opt$expert_file)) stop(sprintf("ERROR: Expert predictions not f
 if (!file.exists(opt$test_file)) stop(sprintf("ERROR: Test set not found: %s", opt$test_file))
 
 ai_pred <- read_csv(opt$ai_file, show_col_types = FALSE)
+if (!"AI_Probability" %in% colnames(ai_pred) && "Predicted_Prob" %in% colnames(ai_pred)) {
+  ai_pred <- ai_pred %>% rename(AI_Probability = Predicted_Prob)
+}
+if (!"CaseID" %in% colnames(ai_pred)) {
+  for (candidate in c("ID", "PTID", "RID", "Subject")) {
+    if (candidate %in% colnames(ai_pred)) {
+      ai_pred <- ai_pred %>% rename(CaseID = !!candidate)
+      break
+    }
+  }
+}
 expert_pred <- read_csv(opt$expert_file, show_col_types = FALSE)
 test_data <- read_csv(opt$test_file, show_col_types = FALSE)
 
@@ -979,4 +988,5 @@ cat(sprintf("  %s\n", figures_dir))
 
 cat("\n")
 cat(strrep("=", 70), "\n")
+
 
