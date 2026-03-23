@@ -1,5 +1,4 @@
 # ==============================================================================
-# step11_predictive_modeling.R
 # MCI-to-AD conversion prediction with latent and multimodal features
 # ==============================================================================
 library(randomForest)
