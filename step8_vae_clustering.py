@@ -1,752 +1,724 @@
-
 """
+Modality-weighted multimodal VAE clustering for AD subtype discovery.
 
-import os
-import argparse
-import warnings
-import pickle
-import numpy as np
+Inputs:
+  - Clinical_data.csv
+  - metabolites.csv
+  - RNA_plasma.csv
+
+Outputs:
+  - subtype_assignments.csv
+  - latent_representations.csv
+  - vae_summary.json
+"""
 import pandas as pd
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from sklearn.model_selection import train_test_split
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+from sklearn.metrics import (
+    silhouette_score, davies_bouldin_score, calinski_harabasz_score,
+    adjusted_rand_score, normalized_mutual_info_score,
+)
 from sklearn.decomposition import PCA
+from scipy.stats import chi2_contingency
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
+import seaborn as sns
+import argparse, os, warnings, pickle, json
 warnings.filterwarnings("ignore")
-
-# Set device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# =========================
-# Utilities
-# =========================
-def _as_str_id(s: pd.Series) -> pd.Series:
-    return s.astype(str).str.strip()
-
-def _find_col_case_insensitive(df: pd.DataFrame, candidates):
-    col_map = {c.lower(): c for c in df.columns}
-    for cand in candidates:
-        if cand.lower() in col_map:
-            return col_map[cand.lower()]
+np.random.seed(42)
+torch.manual_seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(42)
+# ===================== Arguments =====================
+parser = argparse.ArgumentParser(description="Modality-Weighted Multimodal VAE Clustering")
+parser.add_argument("--cohort",      type=str,   default="A")
+parser.add_argument("--input_dir",   type=str,   default=".")
+parser.add_argument("--output_dir",  type=str,   default=None)
+parser.add_argument("--n_clusters",  type=int,   default=3)
+parser.add_argument("--latent_dim",  type=int,   default=3)
+parser.add_argument("--epochs",      type=int,   default=300)
+parser.add_argument("--batch_size",  type=int,   default=32)
+parser.add_argument("--hidden1",     type=int,   default=256)
+parser.add_argument("--hidden2",     type=int,   default=128)
+parser.add_argument("--lr",          type=float, default=5e-4)
+parser.add_argument("--beta_max",    type=float, default=0.5)
+parser.add_argument("--beta_warmup", type=int,   default=80)
+parser.add_argument("--winsorize_sd",type=float, default=3.0)
+args = parser.parse_args()
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+if args.output_dir is None:
+    args.output_dir = os.path.join(args.input_dir, "vae_revised_output")
+os.makedirs(args.output_dir, exist_ok=True)
+# ===================== Variable Definitions =====================
+# Feature ordering in VAE matrix: CSF first, then Clinical, then MRI.
+# This ordering is critical for the modality-weighted loss function.
+# --- CSF biomarkers retained after quality control ---
+# Exclusion criterion: variables with >50% missingness are removed because
+# median imputation at such rates produces near-constant values that
+# contribute no meaningful variance to latent space learning.
+# Excluded: ABETA42 (72.0%), TAU_TOTAL (52.9%), STREM2 (68.8%), PGRN (63.7%)
+# Retained: PTAU181 (22.3%), AB42_40 (0%), ABETA40 (44.6%)
+CSF_ALIASES = {
+    "PTAU181":   ["ptau181", "ptau", "p_tau181"],
+    "AB42_40":   ["abeta42_abeta40_ratio", "ab42_40", "abeta42_40"],
+    "ABETA40":   ["abeta40", "ab40"],
+}
+# CSF variables excluded due to >50% missingness (kept for post-hoc reporting)
+CSF_EXCLUDED_HIGH_MISS = {
+    "ABETA42":   (["abeta42", "ab42"], 72.0),
+    "TAU_TOTAL": (["tau_total", "tau", "total_tau", "t_tau"], 52.9),
+    "STREM2":    (["strem2", "trem2"], 68.8),
+    "PGRN":      (["pgrn", "progranulin"], 63.7),
+}
+CLINICAL_ALIASES = {
+    "APOE4":     ["apoe4_dosage"],
+    "MMSE":      ["mmse"],
+    "EDUCATION": ["education", "pteducat", "years_education"],
+    "GDS":       ["gds", "gdstotal", "gds_total"],
+}
+# MRI: all ST*** columns from RNA_plasma.csv (discovered dynamically)
+DEMO_ALIASES = {
+    "SEX": ["sex", "ptgender", "gender"],
+    "AGE": ["age", "age_at_visit", "age_bl"],
+}
+EXCLUDED_VARS = {"ADAS13", "CDRSB", "FAQTOTAL", "FAQ", "SEX", "AGE",
+                 "APOE4_STATUS", "AD_Conversion", "Womac.Pain", "Womac.Function",
+                 "ABETA42", "TAU_TOTAL", "STREM2", "PGRN"}
+# ===================== Helpers =====================
+def find_col(df, candidates):
+    """Case-insensitive column lookup."""
+    low = {c.lower(): c for c in df.columns}
+    for c in candidates:
+        if c.lower() in low:
+            return low[c.lower()]
     return None
-
-def _safe_numeric(series: pd.Series) -> pd.Series:
-    return pd.to_numeric(series, errors="coerce")
-
-def _one_hot_from_binary(x: np.ndarray):
-    x = x.astype(int)
-    if not set(np.unique(x)).issubset({0, 1}):
-        raise ValueError("Binary variable contains values outside {0,1}.")
-    oh = np.zeros((len(x), 2), dtype=np.float32)
-    oh[np.arange(len(x)), x] = 1.0
-    return oh
-
-def _one_hot_from_multiclass(x: np.ndarray, classes_sorted):
-    class_to_index = {c: i for i, c in enumerate(classes_sorted)}
-    oh = np.zeros((len(x), len(classes_sorted)), dtype=np.float32)
-    for i, v in enumerate(x):
-        oh[i, class_to_index[v]] = 1.0
-    return oh
-
-def _gap_statistic(X: np.ndarray, k_list, n_refs=10, random_state=42):
-    """
-    Simple Gap Statistic:
-    Gap(k) = E_ref[log(Wk_ref)] - log(Wk_data)
-    where Wk is KMeans inertia (within-cluster dispersion proxy).
-    """
-    rng = np.random.RandomState(random_state)
-    mins = X.min(axis=0)
-    maxs = X.max(axis=0)
-    gaps = []
-    sds = []
-    for k in k_list:
-        km = KMeans(n_clusters=k, n_init=20, random_state=random_state)
-        km.fit(X)
-        wk = km.inertia_
-        log_wk = np.log(wk + 1e-12)
-        
-        ref_logs = []
-        for _ in range(n_refs):
-            X_ref = rng.uniform(mins, maxs, size=X.shape)
-            km_ref = KMeans(n_clusters=k, n_init=10, random_state=rng.randint(0, 10**9))
-            km_ref.fit(X_ref)
-            ref_logs.append(np.log(km_ref.inertia_ + 1e-12))
-        
-        ref_logs = np.array(ref_logs)
-        gap = ref_logs.mean() - log_wk
-        sd = ref_logs.std() * np.sqrt(1 + 1.0 / n_refs)
-        gaps.append(float(gap))
-        sds.append(float(sd))
-    
-    return np.array(gaps), np.array(sds)
-
-# =========================
-# PyTorch Dataset
-# =========================
-class VAEDataset(Dataset):
-    def __init__(self, X, y_dict):
-        self.X = torch.FloatTensor(X)
-        self.y_dict = {k: torch.FloatTensor(v) for k, v in y_dict.items()}
-    
-    def __len__(self):
-        return len(self.X)
-    
-    def __getitem__(self, idx):
-        return self.X[idx], {k: v[idx] for k, v in self.y_dict.items()}
-
-# =========================
-# Model Components (PyTorch)
-# =========================
-class Encoder(nn.Module):
-    def __init__(self, input_dim, latent_dim):
-        super(Encoder, self).__init__()
-        self.fc1 = nn.Linear(input_dim, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 32)
-        self.fc_mean = nn.Linear(32, latent_dim)
-        self.fc_logvar = nn.Linear(32, latent_dim)
-    
-    def forward(self, x):
-        h = F.relu(self.fc1(x))
-        h = F.relu(self.fc2(h))
-        h = F.relu(self.fc3(h))
-        z_mean = self.fc_mean(h)
-        z_logvar = self.fc_logvar(h)
-        return z_mean, z_logvar
-
-class Decoder(nn.Module):
-    def __init__(self, latent_dim, output_dim, output_activation='linear'):
-        super(Decoder, self).__init__()
-        self.fc1 = nn.Linear(latent_dim, 32)
-        self.fc2 = nn.Linear(32, 64)
-        self.fc3 = nn.Linear(64, 128)
-        self.fc_out = nn.Linear(128, output_dim)
-        self.output_activation = output_activation
-    
-    def forward(self, z):
-        h = F.relu(self.fc1(z))
-        h = F.relu(self.fc2(h))
-        h = F.relu(self.fc3(h))
-        out = self.fc_out(h)
-        
-        if self.output_activation == 'softmax':
-            out = F.softmax(out, dim=-1)
-        # linear: no activation
-        return out
-
-class BetaVAE(nn.Module):
-    def __init__(self, input_dim, latent_dim, decoder_dims):
-        super(BetaVAE, self).__init__()
-        self.encoder = Encoder(input_dim, latent_dim)
-        
-        # Create 6 decoders
-        self.decoders = nn.ModuleDict({
-            'csf_ptau181': Decoder(latent_dim, decoder_dims['csf_ptau181'], 'linear'),
-            'csf_abeta_ratio': Decoder(latent_dim, decoder_dims['csf_abeta_ratio'], 'linear'),
-            'mmse': Decoder(latent_dim, decoder_dims['mmse'], 'linear'),
-            'age': Decoder(latent_dim, decoder_dims['age'], 'linear'),
-            'sex': Decoder(latent_dim, decoder_dims['sex'], 'softmax'),
-            'apoe': Decoder(latent_dim, decoder_dims['apoe'], 'softmax'),
-        })
-        
-        self.beta = 0.001  # Will be updated during training
-    
-    def reparameterize(self, z_mean, z_logvar):
-        std = torch.exp(0.5 * z_logvar)
-        eps = torch.randn_like(std)
-        return z_mean + eps * std
-    
-    def forward(self, x):
-        z_mean, z_logvar = self.encoder(x)
-        z = self.reparameterize(z_mean, z_logvar)
-        
-        reconstructions = {}
-        for name, decoder in self.decoders.items():
-            reconstructions[name] = decoder(z)
-        
-        return reconstructions, z_mean, z_logvar
-    
-    def loss_function(self, x, y_dict, reconstructions, z_mean, z_logvar):
-        # Reconstruction losses
-        recon_loss = 0.0
-        recon_losses = {}
-        
-        # Continuous domains (MSE)
-        for domain in ['csf_ptau181', 'csf_abeta_ratio', 'mmse', 'age']:
-            mse = F.mse_loss(reconstructions[domain], y_dict[domain], reduction='sum')
-            recon_losses[domain] = mse.item() / len(x)
-            recon_loss += mse
-        
-        # Categorical domains (Cross-Entropy)
-        for domain in ['sex', 'apoe']:
-            # Use cross_entropy which expects (N, C) for predictions and (N, C) for one-hot targets
-            ce = -torch.sum(y_dict[domain] * torch.log(reconstructions[domain] + 1e-10))
-            recon_losses[domain] = ce.item() / len(x)
-            recon_loss += ce
-        
-        # KL divergence
-        kl_loss = -0.5 * torch.sum(1 + z_logvar - z_mean.pow(2) - z_logvar.exp())
-        
-        # Total loss
-        total_loss = recon_loss + self.beta * kl_loss
-        
-        return total_loss, recon_loss, kl_loss, recon_losses
-
-# =========================
-# Training Functions
-# =========================
-def train_epoch(model, dataloader, optimizer, device):
-    model.train()
-    train_loss = 0.0
-    train_recon = 0.0
-    train_kl = 0.0
-    
-    for batch_x, batch_y in dataloader:
-        batch_x = batch_x.to(device)
-        batch_y = {k: v.to(device) for k, v in batch_y.items()}
-        
-        optimizer.zero_grad()
-        reconstructions, z_mean, z_logvar = model(batch_x)
-        loss, recon, kl, _ = model.loss_function(batch_x, batch_y, reconstructions, z_mean, z_logvar)
-        
-        loss.backward()
-        optimizer.step()
-        
-        train_loss += loss.item()
-        train_recon += recon.item()
-        train_kl += kl.item()
-    
-    n_batches = len(dataloader)
-    return train_loss / n_batches, train_recon / n_batches, train_kl / n_batches
-
-def validate_epoch(model, dataloader, device):
-    model.eval()
-    val_loss = 0.0
-    val_recon = 0.0
-    val_kl = 0.0
-    
-    with torch.no_grad():
-        for batch_x, batch_y in dataloader:
-            batch_x = batch_x.to(device)
-            batch_y = {k: v.to(device) for k, v in batch_y.items()}
-            
-            reconstructions, z_mean, z_logvar = model(batch_x)
-            loss, recon, kl, _ = model.loss_function(batch_x, batch_y, reconstructions, z_mean, z_logvar)
-            
-            val_loss += loss.item()
-            val_recon += recon.item()
-            val_kl += kl.item()
-    
-    n_batches = len(dataloader)
-    return val_loss / n_batches, val_recon / n_batches, val_kl / n_batches
-
-def encode_data(model, X, device, batch_size=64):
-    model.eval()
-    dataset = torch.utils.data.TensorDataset(torch.FloatTensor(X))
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-    
-    z_means = []
-    with torch.no_grad():
-        for batch in dataloader:
-            batch_x = batch[0].to(device)
-            z_mean, _ = model.encoder(batch_x)
-            z_means.append(z_mean.cpu().numpy())
-    
-    return np.concatenate(z_means, axis=0)
-
-# =========================
-# Main
-# =========================
-def main():
-    # ========== Parse Arguments ==========
-    parser = argparse.ArgumentParser(
-        description="Multi-modal VAE Clustering for AD Subtyping (PyTorch)"
-    )
-    parser.add_argument(
-        "--input_file", 
-        type=str, 
-        required=True,
-        help="Path to integrated CSV file with columns: ID, AGE, SEX, MMSE, CSF_PTAU181, CSF_ABETA42_ABETA40_RATIO, APOE_VAR, AD_Conversion"
-    )
-    parser.add_argument(
-        "--output_dir", 
-        type=str, 
-        default="./results",
-        help="Directory to save results (default: ./results)"
-    )
-    parser.add_argument(
-        "--n_clusters", 
-        type=int, 
-        default=3,
-        help="Final K (default: 3)"
-    )
-    parser.add_argument(
-        "--latent_dim", 
-        type=int, 
-        default=10,
-        help="Latent dim (default: 10)"
-    )
-    parser.add_argument(
-        "--epochs", 
-        type=int, 
-        default=200,
-        help="Max epochs (default: 200)"
-    )
-    args = parser.parse_args()
-    
-    # Methods-aligned training settings
-    learning_rate = 0.001
-    batch_size = 64
-    early_stop_patience = 20
-    beta_start = 0.001
-    beta_end = 1.0
-    beta_anneal_epochs = max(1, int(args.epochs * 0.5))
-    k_list = list(range(2, 7))  # 2-6
-    
-    # Output dir
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    # Seeds
-    torch.manual_seed(42)
-    np.random.seed(42)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(42)
-    
+def get_id_col(df):
+    for c in ["ID", "PTID", "RID", "Subject", "id"]:
+        if c in df.columns:
+            return c
+    return None
+# ===================== Data Loading =====================
+def load_data(input_dir):
     print("=" * 70)
-    print("VAE Clustering for AD Subtyping (PyTorch 1.12.0)".center(70))
+    print("MODALITY-WEIGHTED MULTIMODAL VAE CLUSTERING (37 variables)")
     print("=" * 70)
-    print(f"\n📂 Input File: {args.input_file}")
-    print(f"📂 Output Directory: {args.output_dir}")
-    print(f"🖥️  Device: {device}\n")
-    
-    # ========== Step 1: Load Data ==========
-    print("[Step 1/10] Loading integrated data...")
-    if not os.path.exists(args.input_file):
-        raise FileNotFoundError(f"Input file not found: {args.input_file}")
-    
-    df = pd.read_csv(args.input_file)
-    print(f"  Loaded: {df.shape}")
-    
-    # Required columns
-    required_cols = ["ID", "AGE", "SEX", "MMSE", "CSF_PTAU181", "CSF_ABETA42_ABETA40_RATIO", "APOE_VAR", "AD_Conversion"]
-    missing_cols = [c for c in required_cols if c not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing required columns: {missing_cols}")
-    
-    df["ID"] = _as_str_id(df["ID"])
-    df = df.drop_duplicates(subset=["ID"], keep="first")
-    
-    # Convert to numeric
-    df["AGE"] = _safe_numeric(df["AGE"])
-    df["MMSE"] = _safe_numeric(df["MMSE"])
-    df["CSF_PTAU181"] = _safe_numeric(df["CSF_PTAU181"])
-    df["CSF_ABETA42_ABETA40_RATIO"] = _safe_numeric(df["CSF_ABETA42_ABETA40_RATIO"])
-    df["SEX"] = _safe_numeric(df["SEX"])
-    df["APOE_VAR"] = _safe_numeric(df["APOE_VAR"])
-    df["AD_Conversion"] = _safe_numeric(df["AD_Conversion"])
-    
-    # Exclude >20% missing baseline data 
-    baseline_cols = ["AGE", "SEX", "MMSE", "CSF_PTAU181", "CSF_ABETA42_ABETA40_RATIO", "APOE_VAR"]
-    miss_frac = df[baseline_cols].isna().mean(axis=1)
-    excluded_ids = df.loc[miss_frac > 0.2, "ID"].tolist()
-    if len(excluded_ids) > 0:
-        print(f"  ℹ Excluding {len(excluded_ids)} participants with >20% missing baseline data .")
-    df = df[miss_frac <= 0.2].reset_index(drop=True)
-    
-    n_samples = len(df)
-    n_converters = int((df["AD_Conversion"] == 1).sum())
-    print(f"  ✓ Final: {n_samples} samples, {n_converters} converters")
-    
-    # Validate SEX/APOE
-    if df["SEX"].isna().any():
-        raise ValueError("SEX contains missing values.")
-    if not set(sorted(df["SEX"].unique().tolist())).issubset({0.0, 1.0}):
-        raise ValueError("SEX must be binary (0/1).")
-    
-    if df["APOE_VAR"].isna().any():
-        raise ValueError("APOE contains missing values.")
-    apoe_unique = sorted(df["APOE_VAR"].unique().tolist())
-    if not set(apoe_unique).issubset({0.0, 1.0, 2.0}):
-        raise ValueError("APOE variable must be in {0,1,2} (dosage) or {0,1} (status).")
-    
-    # ========== Step 2: Leakage-safe standardization + split ==========
-    print("\n[Step 2/10] Standardization (train-fit only) and Train/Val split...")
-    idx_all = np.arange(n_samples)
-    idx_train, idx_val = train_test_split(idx_all, test_size=0.2, random_state=42)
-    
-    train_df = df.iloc[idx_train].reset_index(drop=True)
-    val_df = df.iloc[idx_val].reset_index(drop=True)
-    
-    # Train-set median imputation for continuous vars
-    cont_cols = ["CSF_PTAU181", "CSF_ABETA42_ABETA40_RATIO", "MMSE", "AGE"]
-    cont_medians = {c: float(train_df[c].median()) for c in cont_cols}
-    
-    for c in cont_cols:
-        train_df[c] = train_df[c].fillna(cont_medians[c])
-        val_df[c] = val_df[c].fillna(cont_medians[c])
-        df[c] = df[c].fillna(cont_medians[c])
-    
-    scaler_cont = StandardScaler()
-    X_train_cont = scaler_cont.fit_transform(train_df[cont_cols].values.astype(np.float32))
-    X_val_cont = scaler_cont.transform(val_df[cont_cols].values.astype(np.float32))
-    X_all_cont = scaler_cont.transform(df[cont_cols].values.astype(np.float32))
-    
-    # One-hot categorical
-    sex_train_oh = _one_hot_from_binary(train_df["SEX"].values.astype(int))
-    sex_val_oh = _one_hot_from_binary(val_df["SEX"].values.astype(int))
-    sex_all_oh = _one_hot_from_binary(df["SEX"].values.astype(int))
-    
-    apoe_vals_all = df["APOE_VAR"].values.astype(int)
-    apoe_classes = sorted(np.unique(apoe_vals_all).tolist())
-    
-    if apoe_classes == [0, 1]:
-        apoe_train_oh = _one_hot_from_binary(train_df["APOE_VAR"].values.astype(int))
-        apoe_val_oh = _one_hot_from_binary(val_df["APOE_VAR"].values.astype(int))
-        apoe_all_oh = _one_hot_from_binary(df["APOE_VAR"].values.astype(int))
-    else:
-        apoe_train_oh = _one_hot_from_multiclass(train_df["APOE_VAR"].values.astype(int), apoe_classes)
-        apoe_val_oh = _one_hot_from_multiclass(val_df["APOE_VAR"].values.astype(int), apoe_classes)
-        apoe_all_oh = _one_hot_from_multiclass(df["APOE_VAR"].values.astype(int), apoe_classes)
-    
-    # Input features to encoder: continuous(z) + sex(onehot) + apoe(onehot)
-    X_train = np.concatenate([X_train_cont, sex_train_oh, apoe_train_oh], axis=1).astype(np.float32)
-    X_val = np.concatenate([X_val_cont, sex_val_oh, apoe_val_oh], axis=1).astype(np.float32)
-    X_all = np.concatenate([X_all_cont, sex_all_oh, apoe_all_oh], axis=1).astype(np.float32)
-    
-    # Decoder targets: use standardized continuous targets
-    y_train = {
-        "csf_ptau181": X_train_cont[:, [0]],
-        "csf_abeta_ratio": X_train_cont[:, [1]],
-        "mmse": X_train_cont[:, [2]],
-        "age": X_train_cont[:, [3]],
-        "sex": sex_train_oh.astype(np.float32),
-        "apoe": apoe_train_oh.astype(np.float32),
-    }
-    y_val = {
-        "csf_ptau181": X_val_cont[:, [0]],
-        "csf_abeta_ratio": X_val_cont[:, [1]],
-        "mmse": X_val_cont[:, [2]],
-        "age": X_val_cont[:, [3]],
-        "sex": sex_val_oh.astype(np.float32),
-        "apoe": apoe_val_oh.astype(np.float32),
-    }
-    
-    print(f"  Train: {X_train.shape}, Val: {X_val.shape}")
-    print(f"  Encoder input dim: {X_all.shape[1]}")
-    print(f"  Latent dim: {args.latent_dim}")
-    print(f"  Batch size: {batch_size}, Max epochs: {args.epochs}, EarlyStop patience: {early_stop_patience}")
-    print(f"  Beta annealing: {beta_start} -> {beta_end} over {beta_anneal_epochs} epochs")
-    
-    # Create PyTorch datasets
-    train_dataset = VAEDataset(X_train, y_train)
-    val_dataset = VAEDataset(X_val, y_val)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-    # ========== Step 3: Build beta-VAE (6 decoders) ==========
-    print("\n[Step 3/10] Building beta-VAE (1 encoder + 6 decoders)...")
-    input_dim = X_all.shape[1]
-    latent_dim = int(args.latent_dim)
-    
-    decoder_dims = {
-        'csf_ptau181': 1,
-        'csf_abeta_ratio': 1,
-        'mmse': 1,
-        'age': 1,
-        'sex': sex_train_oh.shape[1],
-        'apoe': apoe_train_oh.shape[1],
-    }
-    
-    model = BetaVAE(input_dim=input_dim, latent_dim=latent_dim, decoder_dims=decoder_dims)
-    model = model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    print("  ✓ VAE built and moved to device")
-    
-    # ========== Step 4: Train (β anneal + EarlyStopping) ==========
-    print(f"\n[Step 4/10] Training (max {args.epochs} epochs)...")
-    
-    history = {
-        'train_loss': [],
-        'train_recon': [],
-        'train_kl': [],
-        'val_loss': [],
-        'val_recon': [],
-        'val_kl': [],
-        'beta': []
-    }
-    
-    best_val_loss = float('inf')
-    patience_counter = 0
-    best_model_state = None
-    
-    for epoch in range(args.epochs):
-        # Beta annealing
-        t = min(epoch / beta_anneal_epochs, 1.0)
-        current_beta = beta_start + (beta_end - beta_start) * t
-        model.beta = current_beta
-        
-        # Train
-        train_loss, train_recon, train_kl = train_epoch(model, train_loader, optimizer, device)
-        
-        # Validate
-        val_loss, val_recon, val_kl = validate_epoch(model, val_loader, device)
-        
-        # Record history
-        history['train_loss'].append(train_loss)
-        history['train_recon'].append(train_recon)
-        history['train_kl'].append(train_kl)
-        history['val_loss'].append(val_loss)
-        history['val_recon'].append(val_recon)
-        history['val_kl'].append(val_kl)
-        history['beta'].append(current_beta)
-        
-        # Print progress
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1}/{args.epochs} - "
-                  f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, "
-                  f"Beta: {current_beta:.4f}")
-        
-        # Early stopping
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            best_model_state = model.state_dict().copy()
-        else:
-            patience_counter += 1
-            if patience_counter >= early_stop_patience:
-                print(f"  Early stopping at epoch {epoch+1}")
+    print(f"Input:  {input_dir}")
+    print(f"Device: {DEVICE}  |  Latent: {args.latent_dim}  |  K: {args.n_clusters}")
+    n_total = len(CSF_ALIASES) + len(CLINICAL_ALIASES) + 30  # approximate
+    print(f"Arch:   {n_total}->{args.hidden1}->{args.hidden2}->{args.latent_dim}")
+    print(f"Beta:   warmup={args.beta_warmup}, max={args.beta_max}")
+    print(f"Winsorize: {args.winsorize_sd} SD  |  Log1p: DISABLED (z-score input)")
+    print(f"StandardScaler: DISABLED (z-score input)")
+    print(f"Loss:   MODALITY-WEIGHTED (CSF:Clin:MRI = 1:1:1)")
+    print(f"CSF QC: excluded 4 variables with >50% missingness")
+    print()
+    print("[1/8] Loading CSV files...")
+    csvs = {}
+    for f in sorted(os.listdir(input_dir)):
+        if not f.endswith(".csv"):
+            continue
+        path = os.path.join(input_dir, f)
+        try:
+            df = pd.read_csv(path)
+            csvs[f] = df
+            print(f"  {f}: {df.shape[0]}x{df.shape[1]}  {list(df.columns)}")
+        except Exception as e:
+            print(f"  WARNING: {f} -> {e}")
+    # ---- Locate CSF biomarkers ----
+    csf_found = {}
+    for var, aliases in CSF_ALIASES.items():
+        for fname, df in csvs.items():
+            col = find_col(df, aliases)
+            idc = get_id_col(df)
+            if col and idc:
+                csf_found[var] = (fname, col, idc)
+                print(f"  CSF  {var}: {fname} -> '{col}'")
                 break
-    
-    # Restore best model
-    if best_model_state is not None:
-        model.load_state_dict(best_model_state)
-    print("  ✓ Training completed")
-    
-    # Plot training history
-    plt.figure(figsize=(10, 6))
-    plt.plot(history['train_loss'], label="Train Loss", linewidth=2)
-    plt.plot(history['val_loss'], label="Val Loss", linewidth=2)
-    plt.xlabel("Epoch", fontsize=12)
-    plt.ylabel("Loss", fontsize=12)
-    plt.title("beta-VAE Training (PyTorch)", fontsize=14)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.savefig(os.path.join(args.output_dir, "training_history.png"), dpi=300, bbox_inches="tight")
-    plt.close()
-    
-    # ========== Step 5: Encode ==========
-    print("\n[Step 5/10] Encoding...")
-    z_mean_encoded = encode_data(model, X_all, device, batch_size=batch_size)
-    print(f"  ✓ Latent: {z_mean_encoded.shape}")
-    
-    # ========== Step 6: Cluster evaluation (K=2-6 + gap) ==========
-    print("\n[Step 6/10] Cluster evaluation (K=2-6, Silhouette/DB/CH/Gap/Inertia)...")
-    gaps, gap_sds = _gap_statistic(z_mean_encoded, k_list=k_list, n_refs=10, random_state=42)
-    
-    metrics = {"K": [], "Silhouette": [], "DB": [], "CH": [], "Gap": [], "Gap_SD": [], "Inertia": []}
-    for i, k in enumerate(k_list):
-        km = KMeans(n_clusters=k, init="k-means++", n_init=20, random_state=42)
-        labels = km.fit_predict(z_mean_encoded)
-        sil = silhouette_score(z_mean_encoded, labels)
-        db = davies_bouldin_score(z_mean_encoded, labels)
-        ch = calinski_harabasz_score(z_mean_encoded, labels)
-        
-        metrics["K"].append(k)
-        metrics["Silhouette"].append(float(sil))
-        metrics["DB"].append(float(db))
-        metrics["CH"].append(float(ch))
-        metrics["Gap"].append(float(gaps[i]))
-        metrics["Gap_SD"].append(float(gap_sds[i]))
-        metrics["Inertia"].append(float(km.inertia_))
-        
-        print(f"    K={k}: Sil={sil:.3f}, DB={db:.3f}, CH={ch:.1f}, Gap={gaps[i]:.3f}")
-    
-    metrics_df = pd.DataFrame(metrics)
-    metrics_df.to_csv(os.path.join(args.output_dir, "cluster_metrics_table.csv"), index=False)
-    
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-    axes[0, 0].plot(metrics["K"], metrics["Silhouette"], "o-", linewidth=2)
-    axes[0, 0].set_title("Silhouette (Higher Better)")
-    axes[0, 0].set_xlabel("K")
-    axes[0, 0].grid(True, alpha=0.3)
-    
-    axes[0, 1].plot(metrics["K"], metrics["DB"], "o-", linewidth=2, color="red")
-    axes[0, 1].set_title("Davies-Bouldin (Lower Better)")
-    axes[0, 1].set_xlabel("K")
-    axes[0, 1].grid(True, alpha=0.3)
-    
-    axes[1, 0].plot(metrics["K"], metrics["CH"], "o-", linewidth=2, color="green")
-    axes[1, 0].set_title("Calinski-Harabasz (Higher Better)")
-    axes[1, 0].set_xlabel("K")
-    axes[1, 0].grid(True, alpha=0.3)
-    
-    axes[1, 1].errorbar(metrics["K"], metrics["Gap"], yerr=metrics["Gap_SD"], fmt="o-", linewidth=2, color="purple")
-    axes[1, 1].set_title("Gap Statistic (Higher Better)")
-    axes[1, 1].set_xlabel("K")
-    axes[1, 1].grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(args.output_dir, "cluster_evaluation.png"), dpi=300, bbox_inches="tight")
-    plt.close()
-
-    # ========== Step 7: Final clustering ==========
-    print("\n[Step 7/10] Clustering...")
-    final_k = int(args.n_clusters)
-    kmeans_final = KMeans(n_clusters=final_k, init="k-means++", n_init=50, random_state=42)
-    cluster_labels = kmeans_final.fit_predict(z_mean_encoded)
-    
-    print(f"\n  ✓ Final K={final_k}:")
-    for i in range(final_k):
-        count = int(np.sum(cluster_labels == i))
-        print(f"    Cluster {i}: {count} ({count/len(cluster_labels)*100:.1f}%)")
-    
-    # ========== Step 8: Save Results ==========
-    print("\n[Step 8/10] Saving...")
-    
-    # cluster_results.csv
-    result_df = pd.DataFrame({
-        "ID": df["ID"].values,
-        "Cluster_Labels": cluster_labels
-    })
-    result_df = pd.merge(result_df, df[["ID", "AD_Conversion"]], on="ID", how="left")
-    result_df.to_csv(os.path.join(args.output_dir, "cluster_results.csv"), index=False)
-    
-    # latent_encoded.csv
-    latent_cols = [f"Latent_{i+1}" for i in range(latent_dim)]
-    latent_df = pd.DataFrame(z_mean_encoded, columns=latent_cols)
-    latent_df.insert(0, "ID", df["ID"].values)
-    latent_df["Cluster_Labels"] = cluster_labels
-    latent_df = pd.merge(latent_df, df[["ID", "AD_Conversion"]], on="ID", how="left")
-    latent_df.to_csv(os.path.join(args.output_dir, "latent_encoded.csv"), index=False)
-    
-    # Save PyTorch model
-    torch.save({
-        'model_state_dict': model.state_dict(),
-        'input_dim': input_dim,
-        'latent_dim': latent_dim,
-        'decoder_dims': decoder_dims,
-    }, os.path.join(args.output_dir, "vae_model.pth"))
-    
-    # Save scalers.pkl / metadata.pkl
-    scalers = {
-        "continuous_scaler": scaler_cont,
-        "continuous_train_medians": cont_medians,
-    }
-    with open(os.path.join(args.output_dir, "scalers.pkl"), "wb") as f:
-        pickle.dump(scalers, f)
-    
-    feature_dims = {
-        "continuous": int(X_all_cont.shape[1]),
-        "sex_onehot": int(sex_all_oh.shape[1]),
-        "apoe_onehot": int(apoe_all_oh.shape[1]),
-    }
-    with open(os.path.join(args.output_dir, "metadata.pkl"), "wb") as f:
-        pickle.dump({
-            "feature_dims": feature_dims,
-            "excluded_missing_gt_20pct": len(excluded_ids),
-            "required_baseline_columns": baseline_cols,
-            "apoe_classes": apoe_classes,
-            "latent_dim": latent_dim,
-            "final_k": final_k,
-            "framework": "PyTorch 1.12.0",
-        }, f)
-    
-    # ========== Step 9: Latent visualization (PCA) ==========
-    print("\n[Step 9/10] Visualization...")
-    pca = PCA(n_components=2)
-    z_pca = pca.fit_transform(z_mean_encoded)
-    
-    plt.figure(figsize=(12, 5))
-    
-    plt.subplot(1, 2, 1)
-    colors = plt.cm.Set2(np.linspace(0, 1, final_k))
-    for i in range(final_k):
-        mask = cluster_labels == i
-        plt.scatter(
-            z_pca[mask, 0],
-            z_pca[mask, 1],
-            c=[colors[i]],
-            label=f"Cluster {i}",
-            alpha=0.6,
-            s=50,
-            edgecolors="black",
-            linewidth=0.5,
+        if var not in csf_found:
+            raise SystemExit(f"FATAL: CSF variable {var} not found in any CSV")
+    # Report excluded CSF variables
+    print(f"\n  CSF excluded (>50% missing):")
+    for var, (aliases, miss_pct) in CSF_EXCLUDED_HIGH_MISS.items():
+        print(f"    {var}: {miss_pct:.1f}% missing -> EXCLUDED")
+    # ---- Locate clinical vars ----
+    clin_found = {}
+    for var, aliases in CLINICAL_ALIASES.items():
+        for fname, df in csvs.items():
+            col = find_col(df, aliases)
+            idc = get_id_col(df)
+            if col and idc:
+                clin_found[var] = (fname, col, idc)
+                print(f"  CLIN {var}: {fname} -> '{col}'")
+                break
+        if var not in clin_found:
+            raise SystemExit(f"FATAL: Clinical variable {var} not found")
+    # ---- Locate MRI features (all ST*** columns) ----
+    mri_file = "RNA_plasma.csv"
+    if mri_file not in csvs:
+        raise SystemExit(f"FATAL: {mri_file} not found")
+    mri_df_raw = csvs[mri_file]
+    mri_id = get_id_col(mri_df_raw)
+    mri_cols = [c for c in mri_df_raw.columns if c.startswith("ST")]
+    print(f"  MRI  {len(mri_cols)} features from {mri_file}: {mri_cols[:5]}...{mri_cols[-2:]}")
+    # ---- Demographics (post-hoc) ----
+    demo_found = {}
+    for var, aliases in DEMO_ALIASES.items():
+        for fname, df in csvs.items():
+            col = find_col(df, aliases)
+            idc = get_id_col(df)
+            if col and idc:
+                demo_found[var] = (fname, col, idc)
+                break
+    # ---- Outcome ----
+    outcome_df = None
+    if "Womac_score_pain_function.csv" in csvs:
+        outcome_df = csvs["Womac_score_pain_function.csv"].copy()
+        oc = get_id_col(outcome_df)
+        if oc:
+            outcome_df = outcome_df.rename(columns={oc: "ID"})
+    # ---- Build unified VAE DataFrame ----
+    # CRITICAL: Column order = CSF first, then Clinical, then MRI
+    # This ordering is required by the modality-weighted loss function.
+    print(f"\n[2/8] Building VAE matrix (ordered: CSF -> Clin -> MRI)...")
+    vae_df = None
+    source_map = {}
+    # CSF first
+    for var, (fname, col, idc) in csf_found.items():
+        tmp = csvs[fname][[idc, col]].rename(columns={idc: "ID", col: var})
+        vae_df = tmp if vae_df is None else vae_df.merge(tmp, on="ID", how="inner")
+        source_map[var] = f"{fname}->{col}"
+    # Clinical second
+    for var, (fname, col, idc) in clin_found.items():
+        tmp = csvs[fname][[idc, col]].rename(columns={idc: "ID", col: var})
+        vae_df = vae_df.merge(tmp, on="ID", how="inner")
+        source_map[var] = f"{fname}->{col}"
+    # MRI last
+    mri_subset = mri_df_raw[[mri_id] + mri_cols].rename(columns={mri_id: "ID"})
+    vae_df = vae_df.merge(mri_subset, on="ID", how="inner")
+    for mc in mri_cols:
+        source_map[mc] = f"{mri_file}->{mc}"
+    n_feat = vae_df.shape[1] - 1  # minus ID
+    feat_names = [c for c in vae_df.columns if c != "ID"]
+    csf_names = list(CSF_ALIASES.keys())
+    clin_names = list(CLINICAL_ALIASES.keys())
+    # Verify ordering
+    n_csf = len(csf_names)
+    n_clin = len(clin_names)
+    n_mri = len(mri_cols)
+    assert feat_names[:n_csf] == csf_names, "CSF columns not in expected position"
+    assert feat_names[n_csf:n_csf+n_clin] == clin_names, "Clinical columns not in expected position"
+    print(f"  VAE input: {vae_df.shape[0]} participants x {n_feat} variables")
+    print(f"  CSF ({n_csf}):  {csf_names}  [cols 0:{n_csf}]")
+    print(f"  Clin ({n_clin}): {clin_names}  [cols {n_csf}:{n_csf+n_clin}]")
+    print(f"  MRI ({n_mri}):  {mri_cols[:3]}...{mri_cols[-1]}  [cols {n_csf+n_clin}:{n_feat}]")
+    print(f"  EXCLUDED: {sorted(EXCLUDED_VARS)}")
+    print(f"  Modality weights: CSF(1/{n_csf}) + Clin(1/{n_clin}) + MRI(1/{n_mri}) = 1:1:1")
+    # Demographics df
+    demo_df = vae_df[["ID"]].copy()
+    for var, (fname, col, idc) in demo_found.items():
+        tmp = csvs[fname][[idc, col]].rename(columns={idc: "ID", col: var})
+        demo_df = demo_df.merge(tmp, on="ID", how="left")
+    # Fix SEX encoding
+    if "SEX" in demo_df.columns:
+        n_odd = int(((demo_df["SEX"] != 0) & (demo_df["SEX"] != 1) &
+                      demo_df["SEX"].notna()).sum())
+        if n_odd > 0:
+            print(f"\n  WARNING: {n_odd} non-binary SEX values detected, rounding to 0/1")
+            print(f"    Before: {demo_df['SEX'].value_counts().to_dict()}")
+            demo_df["SEX"] = demo_df["SEX"].round().astype(int)
+            print(f"    After:  {demo_df['SEX'].value_counts().to_dict()}")
+    return vae_df, demo_df, outcome_df, source_map, csf_names, clin_names, mri_cols
+# ===================== Preprocessing =====================
+def preprocess(vae_df, csf_names, winsorize_sd=3.0):
+    """
+    Data is ALREADY z-score standardized. Preprocessing:
+      1. Median imputation
+      2. Report missingness per variable
+      3. Winsorize at +/-winsorize_sd (clip extreme z-scores)
+      4. NO log1p (would distort z-score distribution)
+      5. NO StandardScaler (already standardized)
+    """
+    print(f"\n[3/8] Preprocessing (z-score input detected)...")
+    ids = vae_df["ID"].values
+    feat = [c for c in vae_df.columns if c != "ID"]
+    X = vae_df[feat].values.astype(np.float64)
+    # Report missingness
+    print(f"\n  Missing data report:")
+    high_miss_vars = []
+    for i, f in enumerate(feat):
+        n_miss = int(np.isnan(X[:,i]).sum())
+        pct = 100 * n_miss / X.shape[0]
+        if n_miss > 0:
+            print(f"    {f}: {n_miss}/{X.shape[0]} ({pct:.1f}%) missing")
+        if pct > 50:
+            high_miss_vars.append((f, pct))
+    if high_miss_vars:
+        print(f"\n  WARNING: {len(high_miss_vars)} variables have >50% missing:")
+        for v, p in high_miss_vars:
+            print(f"    {v}: {p:.1f}%")
+        print(f"  Median imputation will fill these with constant values.")
+        print(f"  Consider excluding high-missingness variables.\n")
+    # Median imputation
+    imp = SimpleImputer(strategy="median")
+    X = imp.fit_transform(X)
+    # Verify data is z-score (sanity check)
+    means = X.mean(axis=0)
+    stds = X.std(axis=0)
+    print(f"\n  Post-imputation stats:")
+    print(f"    Mean range: [{means.min():.3f}, {means.max():.3f}]")
+    print(f"    SD range:   [{stds.min():.3f}, {stds.max():.3f}]")
+    n_const = int(np.sum(stds < 0.01))
+    if n_const > 0:
+        const_vars = [feat[i] for i in range(len(feat)) if stds[i] < 0.01]
+        print(f"    WARNING: {n_const} near-constant variables (sd<0.01): {const_vars}")
+        print(f"    These are likely high-missingness vars filled with median.")
+    # NO log1p
+    print(f"\n  Skipping log1p (data is pre-standardized z-scores)")
+    # Winsorize ALL columns at +/-winsorize_sd
+    n_clip = 0
+    for i in range(X.shape[1]):
+        mu, sd = X[:,i].mean(), X[:,i].std()
+        if sd < 1e-12:
+            continue
+        lo, hi = mu - winsorize_sd * sd, mu + winsorize_sd * sd
+        n_clip += int(np.sum((X[:,i] < lo) | (X[:,i] > hi)))
+        X[:,i] = np.clip(X[:,i], lo, hi)
+    print(f"  Winsorized {n_clip} values at +/-{winsorize_sd} SD")
+    # NO StandardScaler
+    print(f"  SkippingStandardScaler (data is pre-standardized)")
+    print(f"  Final matrix: {X.shape[0]} x {X.shape[1]}")
+    return X, ids, feat, None, imp
+# ===================== VAE Model =====================
+class Encoder(nn.Module):
+    def __init__(self, d_in, h1, h2, d_z):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_in, h1), nn.BatchNorm1d(h1), nn.ReLU(), nn.Dropout(0.25),
+            nn.Linear(h1, h2),   nn.BatchNorm1d(h2), nn.ReLU(), nn.Dropout(0.15),
         )
-    plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)")
-    plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)")
-    plt.title("Clusters (latent PCA)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    plt.subplot(1, 2, 2)
-    if n_converters > 0:
-        conv_mask = df["AD_Conversion"].values == 1
-        plt.scatter(z_pca[~conv_mask, 0], z_pca[~conv_mask, 1], c="blue", label="Stable", alpha=0.5, s=50)
-        plt.scatter(z_pca[conv_mask, 0], z_pca[conv_mask, 1], c="red", label="Converter", alpha=0.7, s=50, marker="^")
-        plt.title("Colored by Outcome")
+        self.fc_mu     = nn.Linear(h2, d_z)
+        self.fc_logvar = nn.Linear(h2, d_z)
+    def forward(self, x):
+        h = self.net(x)
+        return self.fc_mu(h), self.fc_logvar(h)
+class Decoder(nn.Module):
+    def __init__(self, d_z, h2, h1, d_out):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_z, h2),  nn.BatchNorm1d(h2), nn.ReLU(), nn.Dropout(0.15),
+            nn.Linear(h2, h1),   nn.BatchNorm1d(h1), nn.ReLU(), nn.Dropout(0.25),
+            nn.Linear(h1, d_out),
+        )
+    def forward(self, z):
+        return self.net(z)
+class VAE(nn.Module):
+    def __init__(self, d_in, h1, h2, d_z):
+        super().__init__()
+        self.encoder = Encoder(d_in, h1, h2, d_z)
+        self.decoder = Decoder(d_z, h2, h1, d_in)
+    def reparameterize(self, mu, logvar):
+        return mu + torch.exp(0.5 * logvar) * torch.randn_like(logvar)
+    def forward(self, x):
+        mu, lv = self.encoder(x)
+        z = self.reparameterize(mu, lv)
+        return self.decoder(z), mu, lv, z
+    def encode_mu(self, x):
+        mu, _ = self.encoder(x)
+        return mu
+# ===================== Modality-Weighted Loss =====================
+def vae_loss_weighted(recon, x, mu, lv, beta, n_csf, n_clin):
+    """
+    Modality-weighted reconstruction loss.
+    Instead of computing a single MSE across all 41 features (which lets
+    the 30 MRI features dominate), we compute the MEAN MSE within each
+    modality and then SUM the three modality losses. This gives each
+    modality equal weight (1:1:1) regardless of its dimensionality.
+    Feature layout (columns): [CSF_0 .. CSF_{n_csf-1}] [Clin_0 .. Clin_{n_clin-1}] [MRI_0 ..MRI_rest]
+    Args:
+        recon: reconstructed output (batch x d_in)
+        x:     original input (batch x d_in)
+        mu:    latent mean (batch x d_z)
+        lv:    latent log-variance (batch x d_z)
+        beta:  KL weight (annealed)
+        n_csf: number of CSF features (7)
+        n_clin: number of clinical features (4)
+    Returns:
+        total_loss, recon_loss, kl_loss, (loss_csf, loss_clin, loss_mri)
+    """
+    # Per-modality mean MSE (averaged over features AND batch)
+    loss_csf  =nn.functional.mse_loss(recon[:, :n_csf],
+                                        x[:, :n_csf], reduction="mean")
+    loss_clin = nn.functional.mse_loss(recon[:,n_csf:n_csf+n_clin],
+                                        x[:,n_csf:n_csf+n_clin], reduction="mean")
+    loss_mri  =nn.functional.mse_loss(recon[:,n_csf+n_clin:],
+                                        x[:,n_csf+n_clin:], reduction="mean")
+    # Equal-weight sum: each modality contributes 1/3 of reconstruction signal
+    recon_loss = loss_csf + loss_clin + loss_mri
+    # KL divergence (unchanged)
+    kl = -0.5 * torch.sum(1 + lv - mu.pow(2) - lv.exp()) / x.size(0)
+    total = recon_loss + beta * kl
+    return total, recon_loss, kl, (loss_csf, loss_clin, loss_mri)
+# ===================== Training =====================
+def train_vae(X, args, n_csf, n_clin):
+    d_in = X.shape[1]
+    n_mri = d_in - n_csf - n_clin
+    print(f"\n[4/8] Training Modality-Weighted VAE  (d_in={d_in}, latent={args.latent_dim})")
+    print(f"  {d_in}->{args.hidden1}->{args.hidden2}->{args.latent_dim}")
+    print(f"  beta 0->{args.beta_max} over {args.beta_warmup} ep, "
+          f"lr={args.lr}, epochs={args.epochs}")
+    print(f"  Modality weighting: CSF({n_csf}) + Clin({n_clin}) + MRI({n_mri}) = 1:1:1")
+    Xt = torch.FloatTensor(X).to(DEVICE)
+    loader = DataLoader(TensorDataset(Xt), batch_size=args.batch_size,
+                        shuffle=True, drop_last=False)
+    model = VAE(d_in, args.hidden1, args.hidden2, args.latent_dim).to(DEVICE)
+    opt   = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs, eta_min=1e-6)
+    hist = {"total": [], "recon": [], "kl": [], "beta": [],
+            "loss_csf": [], "loss_clin": [], "loss_mri": []}
+    for ep in range(1, args.epochs + 1):
+        model.train()
+        beta = min(args.beta_max, args.beta_max * ep / args.beta_warmup)
+        s_t, s_r, s_k, nb = 0, 0, 0, 0
+        s_csf, s_clin, s_mri = 0, 0, 0
+        for (bx,) in loader:
+            opt.zero_grad()
+            rec, mu, lv, z = model(bx)
+            loss, rl, kl, (lc, lcl, lm) = vae_loss_weighted(
+                rec, bx, mu, lv, beta, n_csf, n_clin)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+            s_t += loss.item(); s_r += rl.item(); s_k += kl.item(); nb += 1
+            s_csf += lc.item(); s_clin += lcl.item(); s_mri += lm.item()
+        sched.step()
+        hist["total"].append(s_t / nb)
+        hist["recon"].append(s_r / nb)
+        hist["kl"].append(s_k / nb)
+        hist["beta"].append(beta)
+        hist["loss_csf"].append(s_csf / nb)
+        hist["loss_clin"].append(s_clin / nb)
+        hist["loss_mri"].append(s_mri / nb)
+        if ep % 50 == 0 or ep == 1:
+            print(f"  Ep {ep:>3}/{args.epochs}: total={s_t/nb:.4f} "
+                  f"recon={s_r/nb:.4f} kl={s_k/nb:.4f} beta={beta:.3f} "
+                  f"| CSF={s_csf/nb:.4f} Clin={s_clin/nb:.4f} MRI={s_mri/nb:.4f}")
+    model.eval()
+    with torch.no_grad():
+        Z = model.encode_mu(Xt).cpu().numpy()
+    print(f"  Latent: {Z.shape}")
+    # Report final per-modality loss balance
+    print(f"\n  Final loss balance:")
+    print(f"    CSF:  {hist['loss_csf'][-1]:.4f}")
+    print(f"    Clin: {hist['loss_clin'][-1]:.4f}")
+    print(f"    MRI:  {hist['loss_mri'][-1]:.4f}")
+    ratio_csf = hist['loss_csf'][-1] / (hist['loss_csf'][-1] + hist['loss_clin'][-1] + hist['loss_mri'][-1])
+    ratio_clin = hist['loss_clin'][-1] / (hist['loss_csf'][-1] + hist['loss_clin'][-1] + hist['loss_mri'][-1])
+    ratio_mri = hist['loss_mri'][-1] / (hist['loss_csf'][-1] + hist['loss_clin'][-1] + hist['loss_mri'][-1])
+    print(f"    Ratio: CSF={ratio_csf:.1%} Clin={ratio_clin:.1%} MRI={ratio_mri:.1%}")
+    return model, Z, hist
+# ===================== Clustering =====================
+def run_kmeans(data, n_clusters, label):
+    km = KMeans(n_clusters=n_clusters, n_init=50, max_iter=500, random_state=42)
+    lab = km.fit_predict(data)
+    sil = silhouette_score(data, lab)
+    db  =davies_bouldin_score(data, lab)
+    ch  =calinski_harabasz_score(data, lab)
+    print(f"  {label}: Sil={sil:.4f}  DB={db:.4f}  CH={ch:.4f}")
+    for k in range(n_clusters):
+        print(f"    Cluster {k}: n={int(np.sum(lab == k))}")
+    return lab, km, {"sil": sil, "db": db, "ch": ch}
+def compare_clusterings(lab_a, lab_b):
+    ari = adjusted_rand_score(lab_a, lab_b)
+    nmi = normalized_mutual_info_score(lab_a, lab_b)
+    n = len(lab_a)
+    a11 = sum(1 for i in range(n) for j in range(i+1, n)
+              if (lab_a[i] == lab_a[j]) and (lab_b[i] == lab_b[j]))
+    a10 = sum(1 for i in range(n) for j in range(i+1, n)
+              if (lab_a[i] == lab_a[j]) and (lab_b[i] != lab_b[j]))
+    a01 = sum(1 for i in range(n) for j in range(i+1, n)
+              if (lab_a[i] != lab_a[j]) and (lab_b[i] == lab_b[j]))
+    jac = a11 / (a11 + a10 + a01) if (a11 + a10 + a01) else 0
+    print(f"  VAE vs Direct: ARI={ari:.4f}  NMI={nmi:.4f}  Jaccard={jac:.4f}")
+    return {"ARI": ari, "NMI": nmi, "Jaccard": jac}
+def check_sex(labels, demo_df, n_clusters):
+    print("\n  Sex distribution across subtypes:")
+    if "SEX" not in demo_df.columns:
+        print("    SEX not available"); return None
+    tmp = pd.DataFrame({"ID": demo_df["ID"], "SEX": demo_df["SEX"],
+                         "Subtype": labels + 1})
+    ct = pd.crosstab(tmp["Subtype"], tmp["SEX"])
+    print(ct)
+    try:
+        chi2, p, dof, _ = chi2_contingency(ct)
+        print(f"    Chi2={chi2:.3f}  p={p:.4f}")
+        return {"chi2": float(chi2), "p": float(p), "dof": int(dof)}
+    except Exception as e:
+        print(f"    Chi2 failed: {e}"); return None
+# ===================== Visualization =====================
+def plot_latent(Z, labels, out):
+    if Z.shape[1] >= 3:
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection="3d")
+        for k in sorted(set(labels)):
+            m = labels == k
+            ax.scatter(Z[m, 0], Z[m, 1], Z[m, 2],
+                       label=f"Subtype {k+1} (n={m.sum()})", alpha=.7, s=40)
+        ax.set_xlabel("Z1"); ax.set_ylabel("Z2"); ax.set_zlabel("Z3")
+        ax.legend(); ax.set_title("VAE Latent Space (3D)")
     else:
-        plt.scatter(z_pca[:, 0], z_pca[:, 1], c="gray", alpha=0.5, s=50)
-        plt.title("All Stable (No Converters)")
-    plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)")
-    plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
+        fig, ax = plt.subplots(figsize=(10, 8))
+        for k in sorted(set(labels)):
+            m = labels == k
+            ax.scatter(Z[m, 0], Z[m, 1],
+                       label=f"Subtype {k+1} (n={m.sum()})", alpha=.7, s=40)
+        ax.set_xlabel("Z1"); ax.set_ylabel("Z2")
+        ax.legend(); ax.set_title("VAE Latent Space")
     plt.tight_layout()
-    plt.savefig(os.path.join(args.output_dir, "latent_visualization.png"), dpi=300, bbox_inches="tight")
-    plt.close()
-    
-    # Cluster-outcome summary
-    if n_converters > 0:
-        print("\n📊 Cluster-Outcome Association:")
-        for i in range(final_k):
-            mask = cluster_labels == i
-            conv = int((df.loc[mask, "AD_Conversion"] == 1).sum())
-            total = int(mask.sum())
-            print(f"    Cluster {i}: {conv}/{total} converters ({(conv/total*100 if total>0 else 0):.1f}%)")
-    
-    # ========== Step 10: Summary report ==========
-    print("\n[Step 10/10] Summary report...")
-    with open(os.path.join(args.output_dir, "summary.txt"), "w") as f:
-        f.write("=" * 70 + "\n")
-        f.write("beta-VAE Clustering Summary (PyTorch 1.12.0)\n")
-        f.write("=" * 70 + "\n\n")
-        f.write(f"Input: {args.input_file}\n")
-        f.write(f"Samples: {n_samples}\n")
-        f.write(f"Converters: {n_converters}/{n_samples} ({(n_converters/n_samples*100 if n_samples>0 else 0):.1f}%)\n")
-        f.write(f"Latent dim: {latent_dim}\n")
-        f.write(f"Clusters (final K): {final_k}\n")
-        f.write(f"Excluded (>20% missing baseline): {len(excluded_ids)}\n")
-        f.write(f"Framework: PyTorch 1.12.0\n")
-        f.write(f"Device: {device}\n\n")
-        f.write("K Evaluation (2-6):\n")
-        for _, row in metrics_df.iterrows():
-            f.write(f"  K={int(row['K'])}: Sil={row['Silhouette']:.3f}, "
-                   f"DB={row['DB']:.3f}, CH={row['CH']:.1f}, Gap={row['Gap']:.3f}\n")
-        f.write("\nCluster Distribution:\n")
-        for i in range(final_k):
-            count = int(np.sum(cluster_labels == i))
-            f.write(f"  Cluster {i}: {count} ({count/n_samples*100:.1f}%)\n")
-        f.write("\nInterpretation:\n")
-        f.write("- Continuous domains are z-score standardized using training-set parameters to prevent leakage.\n")
-        f.write("- Categorical domains (SEX/APOE) are one-hot encoded and reconstructed using cross-entropy loss.\n")
-
-    
+    plt.savefig(os.path.join(out, "latent_3d.png"), dpi=150); plt.close()
+    # PCA 2D
+    if Z.shape[1] > 2:
+        pca = PCA(2); Z2 = pca.fit_transform(Z)
+        fig, ax = plt.subplots(figsize=(10, 8))
+        for k in sorted(set(labels)):
+            m = labels == k
+            ax.scatter(Z2[m, 0], Z2[m, 1],
+                       label=f"Subtype {k+1} (n={m.sum()})", alpha=.7, s=40)
+        ev = pca.explained_variance_ratio_
+        ax.set_xlabel(f"PC1 ({ev[0]*100:.1f}%)")
+        ax.set_ylabel(f"PC2 ({ev[1]*100:.1f}%)")
+        ax.legend(); ax.set_title("Latent PCA 2D")
+        plt.tight_layout()
+        plt.savefig(os.path.join(out, "latent_pca2d.png"), dpi=150); plt.close()
+    print(f"  Saved latent plots")
+def plot_history(hist, out):
+    """Training history with per-modality loss breakdown."""
+    fig, axes = plt.subplots(2, 3, figsize=(18, 8))
+    # Row 1: standard plots
+    axes[0][0].plot(hist["total"], label="Total")
+    axes[0][0].plot(hist["recon"], label="Recon")
+    axes[0][0].set_title("Loss"); axes[0][0].legend()
+    axes[0][1].plot(hist["kl"], color="orange"); axes[0][1].set_title("KL")
+    axes[0][2].plot(hist["beta"], color="green"); axes[0][2].set_title("Beta")
+    # Row 2: per-modality loss
+    axes[1][0].plot(hist["loss_csf"], color="red", label="CSF")
+    axes[1][0].plot(hist["loss_clin"], color="blue", label="Clinical")
+    axes[1][0].plot(hist["loss_mri"], color="green", label="MRI")
+    axes[1][0].set_title("Per-Modality Recon Loss"); axes[1][0].legend()
+    # Modality loss ratio over time
+    csf_arr = np.array(hist["loss_csf"])
+    clin_arr = np.array(hist["loss_clin"])
+    mri_arr = np.array(hist["loss_mri"])
+    total_arr = csf_arr + clin_arr + mri_arr
+    total_arr[total_arr < 1e-12] = 1e-12
+    axes[1][1].plot(csf_arr / total_arr, color="red", label="CSF %")
+    axes[1][1].plot(clin_arr / total_arr, color="blue", label="Clin %")
+    axes[1][1].plot(mri_arr / total_arr, color="green", label="MRI %")
+    axes[1][1].axhline(1/3, color="grey", ls="--", lw=1, label="33.3%")
+    axes[1][1].set_title("Modality Loss Ratio"); axes[1][1].legend()
+    axes[1][1].set_ylim(0, 1)
+    # Final bar chart
+    final_vals = [hist["loss_csf"][-1], hist["loss_clin"][-1], hist["loss_mri"][-1]]
+    axes[1][2].bar(["CSF", "Clinical", "MRI"], final_vals,
+                   color=["red", "blue", "green"])
+    axes[1][2].set_title("Final Epoch Loss by Modality")
+    axes[1][2].set_ylabel("MSE")
+    for row in axes:
+        for a in row:
+            a.set_xlabel("Epoch")
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "training_history.png"), dpi=150); plt.close()
+    print(f"  Saved training_history.png")
+def plot_profiles(X, labels, feat, csf_names, clin_names, mri_cols, out):
+    """Heatmap: mean z-score per subtype, grouped by modality."""
+    nk = len(set(labels))
+    prof = np.zeros((nk, len(feat)))
+    for k in range(nk):
+        prof[k] = X[labels == k].mean(axis=0)
+    fig, ax = plt.subplots(figsize=(max(14, len(feat) * 0.4), 5))
+    sns.heatmap(prof, xticklabels=feat,
+                yticklabels=[f"Subtype {k+1}" for k in range(nk)],
+                cmap="RdBu_r", center=0, annot=False, ax=ax)
+    ax.set_title("Subtype Profiles (standardized mean)")
+    plt.xticks(rotation=90, fontsize=6)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "subtype_profiles.png"), dpi=150); plt.close()
+    # Modality-grouped bar chart
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    groups = [("CSF", csf_names), ("Clinical", clin_names), ("MRI", mri_cols)]
+    for ax, (gname, gcols) in zip(axes, groups):
+        idx = [i for i, f in enumerate(feat) if f in gcols]
+        if not idx:
+            continue
+        sub_prof = prof[:,idx]
+        x = np.arange(len(idx))
+        w = 0.25
+        for k in range(nk):
+            ax.bar(x + k * w, sub_prof[k], w, label=f"Subtype {k+1}")
+        ax.set_xticks(x + w)
+        ax.set_xticklabels([feat[i] for i in idx], rotation=90, fontsize=6)
+        ax.set_title(gname)
+        ax.legend(fontsize=7)
+        ax.axhline(0, color="grey", lw=0.5)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "subtype_profiles_grouped.png"), dpi=150); plt.close()
+    print(f"  Saved subtype profile plots")
+def plot_k_selection(X, Z, out, k_range=range(2, 8)):
+    print(f"  K selection (k={list(k_range)})...")
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    for idx, (data, lbl) in enumerate([(X, "Raw"), (Z, "VAE latent")]):
+        inertias, sils = [], []
+        for k in k_range:
+            km = KMeans(k, n_init=30, random_state=42).fit(data)
+            inertias.append(km.inertia_)
+            sils.append(silhouette_score(data, km.labels_))
+        axes[0][idx].plot(list(k_range), inertias, "bo-")
+        axes[0][idx].set_title(f"Elbow ({lbl})"); axes[0][idx].set_xlabel("K")
+        axes[1][idx].plot(list(k_range), sils, "ro-")
+        axes[1][idx].set_title(f"Silhouette ({lbl})"); axes[1][idx].set_xlabel("K")
+    plt.tight_layout()
+    plt.savefig(os.path.join(out, "k_selection.png"), dpi=150); plt.close()
+    print(f"  Saved k_selection.png")
+# ===================== Export =====================
+def export_all(ids, lab_vae, lab_dir, demo_df, outcome_df, Z, model, km, imp,
+               comp, vae_m, dir_m, sex_res, feat, source_map,
+               csf_names, clin_names, mri_cols, out, args, hist):
+    print(f"\n[8/8] Exporting...")
+    # Assignments
+    adf = pd.DataFrame({"ID": ids,
+                         "VAE_Subtype": lab_vae + 1,
+                         "Direct_KMeans_Subtype": lab_dir + 1})
+    if demo_df is not None:
+        adf = adf.merge(demo_df, on="ID", how="left")
+    if outcome_df is not None and "AD_Conversion" in outcome_df.columns:
+        adf = adf.merge(outcome_df[["ID", "AD_Conversion"]], on="ID", how="left")
+    adf.to_csv(os.path.join(out, "subtype_assignments.csv"), index=False)
+    # Conversion rates
+    if "AD_Conversion" in adf.columns:
+        print("\n  === AD Conversion by VAE Subtype ===")
+        for st in sorted(adf["VAE_Subtype"].unique()):
+            sub = adf[adf["VAE_Subtype"] == st]
+            nc = int(sub["AD_Conversion"].sum())
+            print(f"    Subtype {st}: n={len(sub)}, conv={nc}, "
+                  f"rate={nc/len(sub)*100:.1f}%")
+        print("\n  === AD Conversion by Direct K-means ===")
+        for st in sorted(adf["Direct_KMeans_Subtype"].unique()):
+            sub = adf[adf["Direct_KMeans_Subtype"] == st]
+            nc = int(sub["AD_Conversion"].sum())
+            print(f"    Cluster {st}: n={len(sub)}, conv={nc}, "
+                  f"rate={nc/len(sub)*100:.1f}%")
+    # Latent
+    zdf = pd.DataFrame(Z, columns=[f"Z{i+1}" for i in range(Z.shape[1])])
+    zdf.insert(0, "ID", ids)
+    zdf.to_csv(os.path.join(out, "latent_representations.csv"), index=False)
+    # Summary JSON
+    summary = {
+        "method": "Modality-Weighted VAE (37 variables)",
+        "loss_type": "per-modality mean MSE, 1:1:1 weighting",
+        "csf_qc": "excluded 4 CSF variables with >50% missingness",
+        "csf_excluded": {k: f"{v[1]:.1f}% missing" for k, v in CSF_EXCLUDED_HIGH_MISS.items()},
+        "n_participants": int(len(ids)),
+        "n_features": len(feat),
+        "n_csf": len(csf_names),
+        "n_clinical": len(clin_names),
+        "n_mri": len(mri_cols),
+        "features": feat,
+        "csf_features": csf_names,
+        "clinical_features": clin_names,
+        "mri_features": mri_cols,
+        "source_map": source_map,
+        "latent_dim": args.latent_dim,
+        "n_clusters": args.n_clusters,
+        "epochs": args.epochs,
+        "beta_max": args.beta_max,
+        "beta_warmup": args.beta_warmup,
+        "hidden1": args.hidden1,
+        "hidden2": args.hidden2,
+        "lr": args.lr,
+        "winsorize_sd": args.winsorize_sd,
+        "vae_metrics": {k: float(v) for k, v in vae_m.items()},
+        "direct_metrics": {k: float(v) for k, v in dir_m.items()},
+        "comparison": {k: float(v) for k, v in comp.items()},
+        "sex_test": sex_res,
+        "vae_sizes": {f"Subtype_{k+1}": int(np.sum(lab_vae == k))
+                      for k in range(args.n_clusters)},
+        "final_modality_loss": {
+            "CSF": float(hist["loss_csf"][-1]),
+            "Clinical": float(hist["loss_clin"][-1]),
+            "MRI": float(hist["loss_mri"][-1]),
+        },
+    }
+    if "AD_Conversion" in adf.columns:
+        cr = {}
+        for st in sorted(adf["VAE_Subtype"].unique()):
+            sub = adf[adf["VAE_Subtype"] == st]
+            cr[f"Subtype_{st}"] = {
+                "n": int(len(sub)),
+                "converters": int(sub["AD_Conversion"].sum()),
+                "rate": round(float(sub["AD_Conversion"].mean() * 100), 1),
+            }
+        summary["conversion_rates"] = cr
+    with open(os.path.join(out, "vae_summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+    # Pickle artifacts
+    with open(os.path.join(out, "vae_artifacts.pkl"), "wb") as f:
+        pickle.dump({"features": feat, "source_map": source_map,
+                      "args": vars(args),
+                      "imputer_statistics": imp.statistics_.tolist(),
+                      "cluster_centers": km.cluster_centers_.tolist()}, f)
+    centroids_df = pd.DataFrame(
+        km.cluster_centers_,
+        columns=[f"Z{i+1}" for i in range(km.cluster_centers_.shape[1])]
+    )
+    centroids_df.insert(0, "Subtype", np.arange(1, km.cluster_centers_.shape[0] + 1))
+    centroids_df.to_csv(os.path.join(out, "subtype_centroids.csv"), index=False)
+    torch.save(model.state_dict(), os.path.join(out, "vae_model.pt"))
+    print(f"  All files saved to {out}")
+# ===================== Main =====================
+def main():
+    vae_df, demo_df, outcome_df, source_map, csf_names, clin_names, mri_cols = \
+        load_data(args.input_dir)
+    X, ids, feat, scaler, imp = preprocess(vae_df, csf_names, args.winsorize_sd)
+    # Modality boundary indices (critical for weighted loss)
+    n_csf = len(csf_names)
+    n_clin = len(clin_names)
+    n_mri = len(mri_cols)
+    print(f"\n  Modality boundaries: CSF[0:{n_csf}] Clin[{n_csf}:{n_csf+n_clin}] "
+          f"MRI[{n_csf+n_clin}:{n_csf+n_clin+n_mri}]")
+    # Direct K-means baseline
+    print(f"\n[5/8] Direct K-means baseline...")
+    lab_dir, _, dir_m = run_kmeans(X, args.n_clusters, "Direct")
+    # VAE with modality-weighted loss
+    model, Z, hist = train_vae(X, args, n_csf, n_clin)
+    # VAE K-means
+    print(f"\n[6/8] VAE K-means...")
+    lab_vae, km, vae_m = run_kmeans(Z, args.n_clusters, "VAE")
+    # Compare
+    comp = compare_clusterings(lab_dir, lab_vae)
+    # Sex
+    sex_res = check_sex(lab_vae, demo_df, args.n_clusters)
+    # Plots
+    print(f"\n[7/8] Plots...")
+    plot_latent(Z, lab_vae, args.output_dir)
+    plot_history(hist, args.output_dir)
+    plot_profiles(X, lab_vae, feat, csf_names, clin_names, mri_cols,
+                  args.output_dir)
+    plot_k_selection(X, Z, args.output_dir)
+    # Export
+    export_all(ids, lab_vae, lab_dir, demo_df, outcome_df, Z, model, km, imp,
+               comp, vae_m, dir_m, sex_res, feat, source_map,
+               csf_names, clin_names, mri_cols, args.output_dir, args, hist)
     print("\n" + "=" * 70)
-    print("VAE Clustering Completed!".center(70))
+    print("DONE:", args.output_dir)
     print("=" * 70)
-    print(f"✓ Output: {args.output_dir}")
-    print(f"✓ Samples: {n_samples}, Converters: {n_converters}")
-    print(f"✓ Framework: PyTorch 1.12.0 (matches manuscript)")
-    print("✓ Saved: cluster_results.csv, latent_encoded.csv, vae_model.pth, scalers.pkl, metadata.pkl, figures, summary.txt")
-    print("=" * 70)
-
 if __name__ == "__main__":
     main()
+
+
 
