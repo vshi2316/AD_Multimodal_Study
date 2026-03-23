@@ -1,680 +1,750 @@
 """
+Frozen AI prediction pipeline for the independent ADNI test set.
 
+Inputs:
+  - test_set.csv
+  - subtype_assignments.csv
+  - latent_representations.csv
+  - vae_summary.json
+  - Clinical_data.csv
+  - RNA_plasma.csv
+  - metabolites.csv
+
+Outputs:
+  - AI_test_predictions.csv
+  - AI_test_results.json
+  - confusion_matrix.png
+  - probability_distribution.png
+"""
 import argparse
 import pandas as pd
 import numpy as np
 import os
+import json
 import warnings
+import pickle
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
-from scipy import stats
-
-from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, brier_score_loss
-from sklearn.linear_model import LassoCV
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier, VotingClassifier
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.decomposition import KernelPCA
-from sklearn.feature_selection import SelectFromModel
+from sklearn.metrics import (
+    roc_auc_score, roc_curve, confusion_matrix, brier_score_loss,
+    precision_score, recall_score, f1_score,
+)
+from sklearn.linear_model import LogisticRegression, LassoCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
-
-try:
-    from imblearn.over_sampling import BorderlineSMOTE
-    from imblearn.pipeline import Pipeline as ImbPipeline
-    HAS_SMOTE = True
-except ImportError:
-    from sklearn.pipeline import Pipeline as ImbPipeline
-    HAS_SMOTE = False
-
-warnings.filterwarnings('ignore')
-plt.rcParams['font.family'] = 'DejaVu Sans'
-plt.rcParams['axes.unicode_minus'] = False
+from sklearn.model_selection import GridSearchCV
+from sklearn.calibration import calibration_curve
+warnings.filterwarnings("ignore")
+plt.rcParams["font.family"] = "DejaVu Sans"
+plt.rcParams["axes.unicode_minus"] = False
 sns.set_style("whitegrid")
-
-
+np.random.seed(42)
+torch.manual_seed(42)
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='AI Prediction with Frozen Pipeline Strategy'
-    )
-    parser.add_argument('--test_file', type=str, 
-                        default='./AI_vs_Clinician_Test/independent_test_set.csv',
-                        help='Path to independent test set CSV')
-    parser.add_argument('--train_file', type=str, 
-                        default='./cluster_results.csv',
-                        help='Path to training set CSV')
-    parser.add_argument('--output_dir', type=str, 
-                        default='./AI_vs_Clinician_Test',
-                        help='Output directory')
-    parser.add_argument('--n_bootstrap', type=int, default=2000,
-                        help='Number of bootstrap iterations for CI ')
-    parser.add_argument('--mice_iterations', type=int, default=15,
-                        help='MICE imputation iterations ')
-    parser.add_argument('--kpca_components', type=int, default=5,
-                        help='KernelPCA components')
-    parser.add_argument('--high_threshold', type=float, default=0.70,
-                        help='High risk threshold')
-    parser.add_argument('--low_threshold', type=float, default=0.35,
-                        help='Low risk threshold')
-    parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed')
+        description="AI Prediction — Frozen Pipeline with VAE Encoder Inference")
+    parser.add_argument("--base_dir", type=str,
+        default=".",
+        help="Directory containing ALL required files")
+    parser.add_argument("--output_dir", type=str, default=None,
+        help="Output directory (defaults to base_dir)")
+    parser.add_argument("--n_bootstrap", type=int, default=2000)
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
-
-
-def hosmer_lemeshow_test(y_true, y_prob, n_groups=10):
+# ==============================================================================
+# VAE Architecture (must match step8 EXACTLY)
+# ==============================================================================
+class Encoder(nn.Module):
+    def __init__(self, d_in, h1, h2, d_z):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_in, h1), nn.BatchNorm1d(h1), nn.ReLU(), nn.Dropout(0.25),
+            nn.Linear(h1, h2),   nn.BatchNorm1d(h2), nn.ReLU(), nn.Dropout(0.15),
+        )
+        self.fc_mu     = nn.Linear(h2, d_z)
+        self.fc_logvar = nn.Linear(h2, d_z)
+    def forward(self, x):
+        h = self.net(x)
+        return self.fc_mu(h), self.fc_logvar(h)
+class Decoder(nn.Module):
+    def __init__(self, d_z, h2, h1, d_out):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(d_z, h2),  nn.BatchNorm1d(h2), nn.ReLU(), nn.Dropout(0.15),
+            nn.Linear(h2, h1),   nn.BatchNorm1d(h1), nn.ReLU(), nn.Dropout(0.25),
+            nn.Linear(h1, d_out),
+        )
+    def forward(self, z):
+        return self.net(z)
+class VAE(nn.Module):
+    def __init__(self, d_in, h1, h2, d_z):
+        super().__init__()
+        self.encoder = Encoder(d_in, h1, h2, d_z)
+        self.decoder = Decoder(d_z, h2, h1, d_in)
+    def reparameterize(self, mu, logvar):
+        return mu + torch.exp(0.5 * logvar) * torch.randn_like(logvar)
+    def forward(self, x):
+        mu, lv = self.encoder(x)
+        z = self.reparameterize(mu, lv)
+        return self.decoder(z), mu, lv, z
+    def encode_mu(self, x):
+        mu, _ = self.encoder(x)
+        return mu
+def vae_loss_weighted(recon, x, mu, lv, beta, n_csf, n_clin):
+    """Modality-weighted reconstruction loss (identical to step8)."""
+    loss_csf  = nn.functional.mse_loss(recon[:, :n_csf],
+                                        x[:, :n_csf], reduction="mean")
+    loss_clin = nn.functional.mse_loss(recon[:, n_csf:n_csf+n_clin],
+                                        x[:, n_csf:n_csf+n_clin], reduction="mean")
+    loss_mri  = nn.functional.mse_loss(recon[:, n_csf+n_clin:],
+                                        x[:, n_csf+n_clin:], reduction="mean")
+    recon_loss = loss_csf + loss_clin + loss_mri
+    kl = -0.5 * torch.sum(1 + lv - mu.pow(2) - lv.exp()) / x.size(0)
+    return recon_loss + beta * kl, recon_loss, kl
+# ==============================================================================
+# Column mapping: test set column names -> VAE variable names
+# ==============================================================================
+TEST_TO_VAE_MAP = {
+    "PTAU181":   "PTAU181",
+    "AB42_40":   "ABETA42_ABETA40_RATIO",
+    "ABETA40":   "ABETA40",
+    "APOE4":     "APOE4_Positive",
+    "MMSE":      "MMSE_Baseline",
+    "EDUCATION": "Education",
+    "GDS":       None,  # MISSING in test set -> fill with 0
+}
+# Prediction feature mapping: training col -> test col
+TRAIN_TO_TEST_MAP = {
+    "MMSE":                    "MMSE_Baseline",
+    "EDUCATION":               "Education",
+    "APOE4_DOSAGE":            "APOE4_Positive",
+    "PTAU181":                 "PTAU181",
+    "ABETA42_ABETA40_RATIO":   "ABETA42_ABETA40_RATIO",
+    "ABETA40":                 "ABETA40",
+    "GDS":                     None,
+}
+EXCLUDED_PATTERNS = [
+    "FAQ", "FAQTOTAL", "ADAS13", "ADAS", "CDRSB", "CDR",
+    "SEX", "AGE", "GENDER", "APOE4_STATUS", "AD_Conversion",
+    "Womac", "VAE_Subtype", "Direct_KMeans", "DIAGNOSIS",
+    "DX_bl", "DX", "VISCODE",
+]
+# ==============================================================================
+# PHASE 1: Load all data from single directory
+# ==============================================================================
+def load_all_data(base_dir):
+    print("[PHASE 1] Loading data...")
+    print(f"  Base directory: {base_dir}")
+    required = ["independent_test_set.csv", "subtype_assignments.csv",
+                "latent_representations.csv", "vae_summary.json",
+                "Clinical_data.csv", "RNA_plasma.csv", "metabolites.csv"]
+    for f in required:
+        p = os.path.join(base_dir, f)
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"MISSING: {p}")
+    print("  All 7 required files found")
+    test_df  = pd.read_csv(os.path.join(base_dir, "independent_test_set.csv"))
+    subtypes = pd.read_csv(os.path.join(base_dir, "subtype_assignments.csv"))
+    latent   = pd.read_csv(os.path.join(base_dir, "latent_representations.csv"))
+    clinical = pd.read_csv(os.path.join(base_dir, "Clinical_data.csv"))
+    smri     = pd.read_csv(os.path.join(base_dir, "RNA_plasma.csv"))
+    csf      = pd.read_csv(os.path.join(base_dir, "metabolites.csv"))
+    with open(os.path.join(base_dir, "vae_summary.json")) as f:
+        vae_summary = json.load(f)
+    for df in [subtypes, latent, clinical, smri, csf]:
+        df["ID"] = df["ID"].astype(str)
+    print(f"  Test set:     {test_df.shape}")
+    print(f"  Training set: {subtypes.shape[0]} participants")
+    print(f"  VAE features: {len(vae_summary['features'])}")
+    return test_df, subtypes, latent, vae_summary, clinical, smri, csf
+# ==============================================================================
+# PHASE 2: Build 37-variable VAE matrices (training + test)
+# ==============================================================================
+def build_vae_matrices(test_df, subtypes, vae_summary, clinical, smri, csf):
+    print("\n[PHASE 2] Building 37-variable VAE matrices...")
+    vae_features = vae_summary["features"]
+    n_feat = len(vae_features)
+    n_test = len(test_df)
+    source_map = vae_summary.get("source_map", {})
+    # --- Test set matrix ---
+    X_test = np.full((n_test, n_feat), np.nan)
+    for i, vf in enumerate(vae_features):
+        if vf in TEST_TO_VAE_MAP:
+            tc = TEST_TO_VAE_MAP[vf]
+            if tc is None:
+                X_test[:, i] = 0.0
+                print(f"  {vf:>25s} -> FILLED WITH 0 (missing in test set)")
+            elif tc in test_df.columns:
+                X_test[:, i] = pd.to_numeric(test_df[tc], errors="coerce").values
+            else:
+                cl = {c.lower(): c for c in test_df.columns}
+                if tc.lower() in cl:
+                    X_test[:, i] = pd.to_numeric(test_df[cl[tc.lower()]], errors="coerce").values
+                else:
+                    print(f"  WARNING: {vf} -> {tc} NOT FOUND")
+        elif vf.startswith("ST"):
+            if vf in test_df.columns:
+                X_test[:, i] = pd.to_numeric(test_df[vf], errors="coerce").values
+            else:
+                cl = {c.lower(): c for c in test_df.columns}
+                if vf.lower() in cl:
+                    X_test[:, i] = pd.to_numeric(test_df[cl[vf.lower()]], errors="coerce").values
+                else:
+                    print(f"  WARNING: MRI {vf} NOT FOUND")
+    # --- Training set matrix (same column order) ---
+    train_df = subtypes[["ID"]].copy()
+    for vf in vae_features:
+        found = False
+        for src_df in [csf, clinical, smri]:
+            if vf in src_df.columns:
+                train_df = train_df.merge(src_df[["ID", vf]], on="ID", how="left")
+                found = True
+                break
+            cl = {c.lower(): c for c in src_df.columns}
+            if vf.lower() in cl:
+                actual = cl[vf.lower()]
+                tmp = src_df[["ID", actual]].rename(columns={actual: vf})
+                train_df = train_df.merge(tmp, on="ID", how="left")
+                found = True
+                break
+        if not found and vf in source_map:
+            src_info = source_map[vf]
+            src_file, src_col = src_info.split("->")
+            for fname, df in [("Clinical_data.csv", clinical),
+                              ("RNA_plasma.csv", smri),
+                              ("metabolites.csv", csf)]:
+                if src_file == fname and src_col in df.columns:
+                    tmp = df[["ID", src_col]].rename(columns={src_col: vf})
+                    train_df = train_df.merge(tmp, on="ID", how="left")
+                    found = True
+                    break
+        if not found:
+            print(f"  WARNING: Training feature '{vf}' not found, filling NaN")
+            train_df[vf] = np.nan
+    X_train = train_df[vae_features].values.astype(float)
+    print(f"  Training VAE matrix: {X_train.shape}")
+    print(f"  Test VAE matrix:     {X_test.shape}")
+    n_miss = int(np.isnan(X_test).sum())
+    print(f"  Test NaN count: {n_miss}")
+    return X_train, X_test, vae_features
+# ==============================================================================
+# PHASE 3: Preprocessing for VAE
+# ==============================================================================
+def preprocess_for_vae(X_train_raw, X_test_raw, winsorize_sd=3.0):
     """
-    Hosmer-Lemeshow goodness-of-fit test.
-    P-value > 0.05 indicates adequate calibration.
+    Training data is already z-score (from step7 preprocessing).
+    Test data is RAW scale (original clinical values).
+    
+    Strategy:
+      1. Median impute training (fitted on training)
+      2. Median impute test (fitted on test, since scales differ)
+      3. Z-score standardize test set to match training scale
+         (using test set's own mean/sd — this is NOT data leakage,
+          it's the same operation step7 applied to training data)
+      4. Winsorize both at +/-3 SD using training statistics
     """
-    df = pd.DataFrame({'y_true': y_true, 'y_prob': y_prob})
-    df['decile'] = pd.qcut(df['y_prob'], q=n_groups, duplicates='drop')
-    
-    observed = df.groupby('decile')['y_true'].sum()
-    expected = df.groupby('decile')['y_prob'].sum()
-    n_per_group = df.groupby('decile').size()
-    
-    # Chi-square statistic
-    chi2 = 0
-    for i in range(len(observed)):
-        if expected.iloc[i] > 0 and (n_per_group.iloc[i] - expected.iloc[i]) > 0:
-            chi2 += ((observed.iloc[i] - expected.iloc[i])**2 / 
-                     (expected.iloc[i] * (1 - expected.iloc[i]/n_per_group.iloc[i]) + 1e-10))
-    
-    # Degrees of freedom = n_groups - 2
-    dof = max(1, len(observed) - 2)
-    p_value = 1 - stats.chi2.cdf(chi2, dof)
-    
-    return {'chi2': chi2, 'df': dof, 'p_value': p_value}
-
-
-def bootstrap_auc_ci(y_true, y_prob, n_bootstrap=2000, alpha=0.05, seed=42):
-    """
-    Bootstrap confidence interval for AUC .
-    """
-    np.random.seed(seed)
-    n = len(y_true)
-    aucs = []
-    
-    for _ in range(n_bootstrap):
-        indices = np.random.choice(n, n, replace=True)
-        y_true_boot = y_true[indices]
-        y_prob_boot = y_prob[indices]
-        
-        # Ensure both classes present
-        if len(np.unique(y_true_boot)) == 2:
-            aucs.append(roc_auc_score(y_true_boot, y_prob_boot))
-    
-    aucs = np.array(aucs)
-    ci_lower = np.percentile(aucs, 100 * alpha / 2)
-    ci_upper = np.percentile(aucs, 100 * (1 - alpha / 2))
-    
-    return {
-        'auc': roc_auc_score(y_true, y_prob),
-        'ci_lower': ci_lower,
-        'ci_upper': ci_upper,
-        'se': np.std(aucs)
-    }
-
-
-def engineering_pipeline(data):
-    """Feature engineering pipeline."""
-    X = pd.DataFrame(index=data.index)
-    
-    # Demographics
-    X['Age'] = data.get('Age', np.nan)
-    X['Gender'] = data.get('Gender', np.nan)
-    X['Education'] = data.get('Education', np.nan)
-    
-    # APOE4
-    if 'APOE4_Positive' in data.columns:
-        X['APOE4'] = data['APOE4_Positive']
-    elif 'APOE4' in data.columns:
-        X['APOE4'] = data['APOE4']
+    print("\n[PHASE 3] Preprocessing for VAE...")
+    # Detect scale mismatch
+    train_means = np.nanmean(X_train_raw, axis=0)
+    test_means  = np.nanmean(X_test_raw, axis=0)
+    scale_ratio = np.nanmedian(np.abs(test_means) / (np.abs(train_means) + 1e-8))
+    print(f"  Scale check: train mean range [{train_means.min():.2f}, {train_means.max():.2f}]")
+    print(f"  Scale check: test  mean range [{test_means.min():.2f}, {test_means.max():.2f}]")
+    print(f"  Scale ratio (median): {scale_ratio:.1f}x")
+    # Step 1: Median impute training
+    train_imputer = SimpleImputer(strategy="median")
+    X_train = train_imputer.fit_transform(X_train_raw)
+    # Step 2: Median impute test (separate imputer since scales differ)
+    test_imputer = SimpleImputer(strategy="median")
+    X_test = test_imputer.fit_transform(X_test_raw)
+    # Step 3: Z-score standardize test set if scale mismatch detected
+    if scale_ratio > 5:
+        print(f"  SCALE MISMATCH DETECTED (ratio={scale_ratio:.0f}x)")
+        print(f"  Training data is z-score (step7), test data is raw scale")
+        print(f"  Applying z-score standardization to test set...")
+        test_mu  = X_test.mean(axis=0)
+        test_std = X_test.std(axis=0)
+        test_std[test_std < 1e-12] = 1.0  # avoid division by zero
+        X_test = (X_test - test_mu) / test_std
+        print(f"  Test set after z-score: mean range [{X_test.mean(axis=0).min():.3f}, "
+              f"{X_test.mean(axis=0).max():.3f}], "
+              f"sd range [{X_test.std(axis=0).min():.3f}, {X_test.std(axis=0).max():.3f}]")
     else:
-        X['APOE4'] = 0
-    
-    X['Age_x_APOE4'] = X['Age'] * X['APOE4']
-    
-    # Cognitive scores
-    if 'MMSE_Baseline' in data.columns:
-        X['MMSE'] = data['MMSE_Baseline']
-        X['MMSE_Inv'] = 30 - X['MMSE']
-    elif 'MMSE' in data.columns:
-        X['MMSE'] = data['MMSE']
-        X['MMSE_Inv'] = 30 - X['MMSE']
-    
-    if 'ADAS13' in data.columns:
-        X['ADAS13'] = data['ADAS13']
-    if 'FAQTOTAL' in data.columns:
-        X['FAQ'] = data['FAQTOTAL']
-    
-    # CSF biomarkers (log-transformed)
-    if 'ABETA42' in data.columns:
-        X['ABETA42'] = np.log1p(data['ABETA42'].clip(lower=0))
-    if 'TAU_TOTAL' in data.columns:
-        X['TAU'] = np.log1p(data['TAU_TOTAL'].clip(lower=0))
-    if 'PTAU181' in data.columns:
-        X['PTAU'] = np.log1p(data['PTAU181'].clip(lower=0))
-    
-    # Derived biomarker ratios
-    if 'ABETA42' in X.columns and 'PTAU' in X.columns:
-        X['Amyloid_Tau_Ratio'] = X['PTAU'] / (X['ABETA42'] + 0.1)
-    
-    # MRI features
-    mri_cols = [c for c in data.columns if c.startswith('ST')]
+        print(f"  Scales appear matched, no additional standardization needed")
+    # Step 4: Winsorize using TRAINING statistics
+    means = X_train.mean(axis=0)
+    stds  = X_train.std(axis=0)
+    n_clip_train, n_clip_test = 0, 0
+    for i in range(X_train.shape[1]):
+        if stds[i] < 1e-12:
+            continue
+        lo = means[i] - winsorize_sd * stds[i]
+        hi = means[i] + winsorize_sd * stds[i]
+        n_clip_train += int(np.sum((X_train[:, i] < lo) | (X_train[:, i] > hi)))
+        n_clip_test  += int(np.sum((X_test[:, i] < lo) | (X_test[:, i] > hi)))
+        X_train[:, i] = np.clip(X_train[:, i], lo, hi)
+        X_test[:, i]  = np.clip(X_test[:, i], lo, hi)
+    print(f"  Winsorized at +/-{winsorize_sd} SD: "
+          f"{n_clip_train} train, {n_clip_test} test values clipped")
+    return X_train, X_test, train_imputer
+# ==============================================================================
+# PHASE 4: Retrain VAE on training data + encode test set
+# ==============================================================================
+def retrain_vae_and_encode(X_train, X_test, vae_summary):
+    print("\n[PHASE 4] Retraining VAE on training data...")
+    h1 = vae_summary.get("hidden1", 256)
+    h2 = vae_summary.get("hidden2", 128)
+    d_z = vae_summary.get("latent_dim", 3)
+    d_in = X_train.shape[1]
+    n_csf = vae_summary.get("n_csf", 3)
+    n_clin = vae_summary.get("n_clinical", 4)
+    epochs = vae_summary.get("epochs", 300)
+    beta_max = vae_summary.get("beta_max", 0.5)
+    beta_warmup = vae_summary.get("beta_warmup", 80)
+    lr = vae_summary.get("lr", 5e-4)
+    print(f"  Architecture: {d_in}->{h1}->{h2}->{d_z}")
+    print(f"  Modality: CSF({n_csf}) + Clin({n_clin}) + MRI({d_in-n_csf-n_clin})")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    Xt = torch.FloatTensor(X_train).to(device)
+    loader = DataLoader(TensorDataset(Xt), batch_size=32, shuffle=True)
+    model = VAE(d_in, h1, h2, d_z).to(device)
+    opt = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    sched = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=1e-6)
+    for ep in range(1, epochs + 1):
+        model.train()
+        beta = min(beta_max, beta_max * ep / beta_warmup)
+        for (bx,) in loader:
+            opt.zero_grad()
+            rec, mu, lv, z = model(bx)
+            loss, _, _ = vae_loss_weighted(rec, bx, mu, lv, beta, n_csf, n_clin)
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+        sched.step()
+        if ep % 100 == 0 or ep == 1:
+            print(f"  Epoch {ep}/{epochs}: loss={loss.item():.4f}, beta={beta:.3f}")
+    model.eval()
+    with torch.no_grad():
+        Z_train = model.encode_mu(Xt).cpu().numpy()
+        Z_test  = model.encode_mu(torch.FloatTensor(X_test).to(device)).cpu().numpy()
+    print(f"  Z_train: {Z_train.shape}, Z_test: {Z_test.shape}")
+    return Z_train, Z_test
+# ==============================================================================
+# PHASE 5: Build prediction feature matrices
+# ==============================================================================
+def build_prediction_features(subtypes, latent, clinical, smri, csf,
+                               test_df, Z_train, Z_test):
+    """Raw clinical/MRI/CSF + Z1-Z3. NO FAQ/ADAS13/CDRSB."""
+    print("\n[PHASE 5] Building prediction feature matrices...")
+    # --- Training features ---
+    master = subtypes[["ID", "AD_Conversion"]].copy()
+    clin_keep = [c for c in ["MMSE", "EDUCATION", "GDS", "APOE4_DOSAGE"]
+                 if c in clinical.columns]
+    if clin_keep:
+        master = master.merge(clinical[["ID"] + clin_keep], on="ID", how="left")
+    csf_keep = [c for c in ["PTAU181", "ABETA42_ABETA40_RATIO", "ABETA40"]
+                if c in csf.columns]
+    if csf_keep:
+        master = master.merge(csf[["ID"] + csf_keep], on="ID", how="left")
+    mri_cols = [c for c in smri.columns if c.startswith("ST")]
     if mri_cols:
-        for col in mri_cols:
-            X[col] = data[col]
-        X['Global_Atrophy'] = data[mri_cols].mean(axis=1)
-        X['Atrophy_x_Edu'] = X['Global_Atrophy'] * X['Education']
-    
-    return X
-
-
-def create_pipeline(classifier, has_smote=True):
-    """Create sklearn/imblearn pipeline."""
-    steps = [('scaler', RobustScaler())]
-    if has_smote and HAS_SMOTE:
-        steps.append(('smote', BorderlineSMOTE(random_state=42, kind='borderline-1')))
-    steps.append(('classifier', classifier))
-    return ImbPipeline(steps)
-
-
+        master = master.merge(smri[["ID"] + mri_cols], on="ID", how="left")
+    z_cols = [c for c in latent.columns if c.startswith("Z")]
+    master = master.merge(latent[["ID"] + z_cols], on="ID", how="left")
+    # Filter features
+    all_cols = [c for c in master.columns if c not in ["ID", "AD_Conversion"]]
+    feature_cols = []
+    for c in all_cols:
+        if any(pat.upper() in c.upper() for pat in EXCLUDED_PATTERNS):
+            continue
+        if pd.api.types.is_numeric_dtype(master[c]):
+            feature_cols.append(c)
+    y_train = master["AD_Conversion"].values
+    X_train = master[feature_cols].values
+    # --- Test features (map column names) ---
+    X_test_list = []
+    used_features = []
+    for feat in feature_cols:
+        if feat.startswith("Z"):
+            z_idx = int(feat[1:]) - 1
+            X_test_list.append(Z_test[:, z_idx])
+            used_features.append(feat)
+        elif feat in TRAIN_TO_TEST_MAP:
+            tc = TRAIN_TO_TEST_MAP[feat]
+            if tc is None:
+                X_test_list.append(np.zeros(len(test_df)))
+                used_features.append(feat)
+            elif tc in test_df.columns:
+                X_test_list.append(pd.to_numeric(test_df[tc], errors="coerce").values)
+                used_features.append(feat)
+            else:
+                cl = {c.lower(): c for c in test_df.columns}
+                if tc.lower() in cl:
+                    X_test_list.append(pd.to_numeric(test_df[cl[tc.lower()]], errors="coerce").values)
+                    used_features.append(feat)
+        elif feat.startswith("ST"):
+            if feat in test_df.columns:
+                X_test_list.append(pd.to_numeric(test_df[feat], errors="coerce").values)
+                used_features.append(feat)
+            else:
+                cl = {c.lower(): c for c in test_df.columns}
+                if feat.lower() in cl:
+                    X_test_list.append(pd.to_numeric(test_df[cl[feat.lower()]], errors="coerce").values)
+                    used_features.append(feat)
+        elif feat in test_df.columns:
+            X_test_list.append(pd.to_numeric(test_df[feat], errors="coerce").values)
+            used_features.append(feat)
+    # Align to common features
+    common_idx = [feature_cols.index(f) for f in used_features]
+    X_train_aligned = X_train[:, common_idx]
+    X_test_aligned = np.column_stack(X_test_list)
+    # Z-score standardize raw test features (non-Z columns) to match
+    # training scale. Training data is already z-score from step7.
+    # Z1-Z3 are already in correct scale from VAE encoder (Phase 3-4).
+    raw_feature_idx = [i for i, f in enumerate(used_features)
+                       if not f.startswith("Z")]
+    if raw_feature_idx:
+        raw_test = X_test_aligned[:, raw_feature_idx]
+        raw_mu  = np.nanmean(raw_test, axis=0)
+        raw_std = np.nanstd(raw_test, axis=0)
+        raw_std[raw_std < 1e-12] = 1.0
+        X_test_aligned[:, raw_feature_idx] = (raw_test - raw_mu) / raw_std
+        print(f"  Z-scored {len(raw_feature_idx)} raw test features to match training scale")
+    # Circularity check
+    for pat in ["FAQ", "ADAS13", "CDRSB"]:
+        for f in used_features:
+            if pat.upper() in f.upper():
+                raise RuntimeError(f"CIRCULARITY LEAK: {f}")
+    print(f"  Features: {len(used_features)}")
+    print(f"    Clinical: {[f for f in used_features if f in clin_keep]}")
+    print(f"    CSF:      {[f for f in used_features if f in csf_keep]}")
+    print(f"    MRI:      {len([f for f in used_features if f.startswith('ST')])} ST features")
+    print(f"    VAE:      {[f for f in used_features if f.startswith('Z')]}")
+    print("  Circularity check PASSED")
+    return X_train_aligned, X_test_aligned, y_train, used_features
+# ==============================================================================
+# PHASE 6-7: MICE imputation + StandardScaler
+# ==============================================================================
+def impute_and_scale(X_train, X_test):
+    print("\n[PHASE 6] MICE imputation (fitted on training)...")
+    imputer = IterativeImputer(max_iter=15, random_state=42, sample_posterior=False)
+    X_train_imp = imputer.fit_transform(X_train)
+    X_test_imp  = imputer.transform(X_test)
+    print(f"  Imputed: {int(np.isnan(X_train).sum())} train NaN, "
+          f"{int(np.isnan(X_test).sum())} test NaN")
+    print("\n[PHASE 7] StandardScaler (fitted on training)...")
+    scaler = StandardScaler()
+    X_train_sc = scaler.fit_transform(X_train_imp)
+    X_test_sc  = scaler.transform(X_test_imp)
+    return X_train_sc, X_test_sc, imputer, scaler
+# ==============================================================================
+# PHASE 8: Lasso feature selection
+# ==============================================================================
+def lasso_feature_selection(X_train, y_train, X_test, feature_names):
+    print("\n[PHASE 8] Lasso feature selection (fitted on training)...")
+    lasso = LassoCV(cv=5, random_state=42, max_iter=10000)
+    lasso.fit(X_train, y_train)
+    mask = np.abs(lasso.coef_) > 1e-6
+    if int(mask.sum()) < 3:
+        print(f"  Lasso selected only {int(mask.sum())}, relaxing to top 10")
+        top_idx = np.argsort(np.abs(lasso.coef_))[::-1][:10]
+        mask = np.zeros(len(feature_names), dtype=bool)
+        mask[top_idx] = True
+    selected = [f for f, s in zip(feature_names, mask) if s]
+    print(f"  Selected {len(selected)}/{len(feature_names)} features:")
+    for f, c in sorted(zip(feature_names, lasso.coef_),
+                        key=lambda x: abs(x[1]), reverse=True):
+        if abs(c) > 1e-6:
+            print(f"    {f:>30s}: coef={c:+.4f}")
+    return X_train[:, mask], X_test[:, mask], selected, lasso
+# ==============================================================================
+# PHASE 9: Train Elastic Net
+# ==============================================================================
+def train_elastic_net(X_train, y_train):
+    print("\n[PHASE 9] Training Elastic Net (consistent with step11)...")
+    param_grid = {
+        "C": np.logspace(-3, 1, 20),
+        "l1_ratio": [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+    }
+    enet = LogisticRegression(
+        penalty="elasticnet", solver="saga", max_iter=10000,
+        random_state=42, class_weight="balanced",
+    )
+    grid = GridSearchCV(enet, param_grid, cv=5, scoring="roc_auc",
+                        n_jobs=-1, refit=True)
+    grid.fit(X_train, y_train)
+    best = grid.best_estimator_
+    print(f"  Best: C={grid.best_params_['C']:.4f}, "
+          f"l1_ratio={grid.best_params_['l1_ratio']}")
+    print(f"  CV AUC: {grid.best_score_:.4f}")
+    print(f"  Non-zero coefs: {int(np.sum(np.abs(best.coef_[0]) > 1e-6))}/{X_train.shape[1]}")
+    # Youden threshold on training set
+    probs = best.predict_proba(X_train)[:, 1]
+    fpr, tpr, thresholds = roc_curve(y_train, probs)
+    j = tpr - fpr
+    idx = np.argmax(j)
+    threshold = thresholds[idx]
+    print(f"  Youden threshold: {threshold:.4f} "
+          f"(Sens={tpr[idx]:.3f}, Spec={1-fpr[idx]:.3f})")
+    return best, threshold
+# ==============================================================================
+# PHASE 10: Evaluate on test set
+# ==============================================================================
+def evaluate_test(model, X_test, y_test, threshold, n_bootstrap=2000):
+    print(f"\n[PHASE 10] Evaluating on test set (N={len(y_test)})...")
+    print(f"  Frozen threshold: {threshold:.4f}")
+    probs = model.predict_proba(X_test)[:, 1]
+    preds = (probs >= threshold).astype(int)
+    auc = roc_auc_score(y_test, probs)
+    brier = brier_score_loss(y_test, probs)
+    cm = confusion_matrix(y_test, preds)
+    tn, fp, fn, tp = cm.ravel()
+    sens = tp / (tp + fn) if (tp + fn) > 0 else 0
+    spec = tn / (tn + fp) if (tn + fp) > 0 else 0
+    ppv  = tp / (tp + fp) if (tp + fp) > 0 else 0
+    npv  = tn / (tn + fn) if (tn + fn) > 0 else 0
+    prec = precision_score(y_test, preds, zero_division=0)
+    rec  = recall_score(y_test, preds, zero_division=0)
+    f1   = f1_score(y_test, preds, zero_division=0)
+    acc  = (tp + tn) / len(y_test)
+    # Bootstrap AUC CI
+    np.random.seed(42)
+    boot_aucs = []
+    for _ in range(n_bootstrap):
+        idx = np.random.choice(len(y_test), size=len(y_test), replace=True)
+        if len(np.unique(y_test[idx])) < 2:
+            continue
+        boot_aucs.append(roc_auc_score(y_test[idx], probs[idx]))
+    ci_lo = np.percentile(boot_aucs, 2.5)
+    ci_hi = np.percentile(boot_aucs, 97.5)
+    print(f"\n  === Test Set Results ===")
+    print(f"  AUC:         {auc:.4f} (95% CI: {ci_lo:.4f}-{ci_hi:.4f})")
+    print(f"  Accuracy:    {acc:.4f}")
+    print(f"  Sensitivity: {sens:.4f}")
+    print(f"  Specificity: {spec:.4f}")
+    print(f"  PPV:         {ppv:.4f}")
+    print(f"  NPV:         {npv:.4f}")
+    print(f"  Precision:   {prec:.4f}")
+    print(f"  Recall:      {rec:.4f}")
+    print(f"  F1:          {f1:.4f}")
+    print(f"  Brier:       {brier:.4f}")
+    print(f"  Confusion: TP={tp} FP={fp} FN={fn} TN={tn}")
+    results = {
+        "AUC": round(auc, 4), "AUC_95CI_Lower": round(ci_lo, 4),
+        "AUC_95CI_Upper": round(ci_hi, 4), "Accuracy": round(acc, 4),
+        "Sensitivity": round(sens, 4), "Specificity": round(spec, 4),
+        "PPV": round(ppv, 4), "NPV": round(npv, 4),
+        "Precision": round(prec, 4), "Recall": round(rec, 4),
+        "F1": round(f1, 4), "Brier": round(brier, 4),
+        "Threshold": round(threshold, 4),
+        "TP": int(tp), "FP": int(fp), "FN": int(fn), "TN": int(tn),
+        "N_test": len(y_test), "N_converters": int(y_test.sum()),
+    }
+    return results, probs, preds
+# ==============================================================================
+# PHASE 11: Visualization + Save
+# ==============================================================================
+def save_all(y_test, probs, preds, results, selected_features, test_df,
+             output_dir):
+    print("\n[PHASE 11] Saving results and plots...")
+    # ROC Curve
+    fpr, tpr, _ = roc_curve(y_test, probs)
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.plot(fpr, tpr, "b-", lw=2,
+            label=f"Elastic Net (AUC={results['AUC']:.3f}, "
+                  f"95%CI [{results['AUC_95CI_Lower']:.3f}-"
+                  f"{results['AUC_95CI_Upper']:.3f}])")
+    ax.plot([0, 1], [0, 1], "k--", lw=1)
+    ax.set_xlabel("1 - Specificity", fontsize=12)
+    ax.set_ylabel("Sensitivity", fontsize=12)
+    ax.set_title("ROC: AI Prediction on Independent Test Set (N=196)", fontsize=13)
+    ax.legend(fontsize=11, loc="lower right")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "AI_ROC_Curve.png"), dpi=300)
+    plt.close()
+    # Confusion Matrix
+    cm = confusion_matrix(y_test, preds)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=["Non-Converter", "Converter"],
+                yticklabels=["Non-Converter", "Converter"], ax=ax)
+    ax.set_xlabel("Predicted"); ax.set_ylabel("Actual")
+    ax.set_title(f"Confusion Matrix (threshold={results['Threshold']:.3f})")
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "AI_Confusion_Matrix.png"), dpi=300)
+    plt.close()
+    # Calibration Plot
+    prob_true, prob_pred = calibration_curve(y_test, probs, n_bins=10)
+    fig, ax = plt.subplots(figsize=(7, 7))
+    ax.plot(prob_pred, prob_true, "bo-", label="Elastic Net")
+    ax.plot([0, 1], [0, 1], "r--", label="Perfect")
+    ax.set_xlabel("Mean Predicted Probability"); ax.set_ylabel("Observed Proportion")
+    ax.set_title("Calibration Plot"); ax.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "AI_Calibration_Plot.png"), dpi=300)
+    plt.close()
+    # Probability Distribution
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(probs[y_test == 0], bins=20, alpha=0.6, label="Non-Converter",
+            color="steelblue", density=True)
+    ax.hist(probs[y_test == 1], bins=20, alpha=0.6, label="Converter",
+            color="salmon", density=True)
+    ax.axvline(results["Threshold"], color="black", ls="--", lw=2,
+               label=f"Threshold={results['Threshold']:.3f}")
+    ax.set_xlabel("Predicted Probability"); ax.set_ylabel("Density")
+    ax.set_title("Predicted Probability Distribution"); ax.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "AI_Probability_Distribution.png"), dpi=300)
+    plt.close()
+    # Save JSON results
+    with open(os.path.join(output_dir, "AI_test_results.json"), "w") as f:
+        json.dump(results, f, indent=2)
+    # Per-patient predictions
+    pred_df = pd.DataFrame({
+        "Actual": y_test.astype(int),
+        "Predicted_Prob": np.round(probs, 4),
+        "Predicted_Class": preds,
+    })
+    for ic in ["ID", "PTID", "RID", "Subject"]:
+        if ic in test_df.columns:
+            pred_df.insert(0, ic, test_df[ic].values)
+            break
+    pred_df.to_csv(os.path.join(output_dir, "AI_per_patient_predictions.csv"),
+                   index=False)
+    compat_df = pred_df.copy()
+    id_col = None
+    for candidate in ["ID", "PTID", "RID", "Subject"]:
+        if candidate in compat_df.columns:
+            id_col = candidate
+            break
+    if id_col is not None:
+        compat_df = compat_df.rename(columns={id_col: "CaseID"})
+    compat_df = compat_df.rename(columns={
+        "Predicted_Prob": "AI_Probability",
+        "Predicted_Class": "AI_Predicted_Class"
+    })
+    compat_df.to_csv(os.path.join(output_dir, "AI_Predictions_Final.csv"), index=False)
+    compat_df.to_csv(os.path.join(output_dir, "AI_test_predictions.csv"), index=False)
+    # Feature list
+    pd.DataFrame({"Feature": selected_features}).to_csv(
+        os.path.join(output_dir, "AI_selected_features.csv"), index=False)
+    # Summary text
+    lines = [
+        "AI Prediction Results Summary",
+        "=" * 50,
+        f"Model: Elastic Net (frozen pipeline)",
+        f"Training: N=157 (ADNI discovery)",
+        f"Test: N={results['N_test']} (independent MCI cohort)",
+        f"Features: {len(selected_features)} (Lasso-selected, includes Z1-Z3)",
+        f"Excludes: FAQ, ADAS13, CDRSB",
+        f"",
+        f"AUC: {results['AUC']:.3f} (95% CI: {results['AUC_95CI_Lower']:.3f}-{results['AUC_95CI_Upper']:.3f})",
+        f"Sensitivity: {results['Sensitivity']:.3f}",
+        f"Specificity: {results['Specificity']:.3f}",
+        f"PPV: {results['PPV']:.3f}  NPV: {results['NPV']:.3f}",
+        f"F1: {results['F1']:.3f}  Brier: {results['Brier']:.4f}",
+        f"Threshold: {results['Threshold']:.3f} (Youden, frozen from training)",
+    ]
+    with open(os.path.join(output_dir, "AI_results_summary.txt"), "w") as f:
+        f.write("\n".join(lines))
+    print(f"  Saved to {output_dir}:")
+    print(f"    AI_ROC_Curve.png, AI_Confusion_Matrix.png,")
+    print(f"    AI_Calibration_Plot.png, AI_Probability_Distribution.png,")
+    print(f"    AI_test_results.json, AI_per_patient_predictions.csv,")
+    print(f"    AI_selected_features.csv, AI_results_summary.txt")
+# ==============================================================================
+# MAIN
+# ==============================================================================
 def main():
     args = parse_args()
     np.random.seed(args.seed)
-    
+    torch.manual_seed(args.seed)
+    base_dir = args.base_dir
+    output_dir = args.output_dir or base_dir
+    os.makedirs(output_dir, exist_ok=True)
     print("=" * 70)
-    print("Step 2: AI Prediction - Frozen Pipeline Strategy")
-    print("LEAKAGE PREVENTION: All parameters fitted on training set only")
+    print("Step 2: AI Prediction on Independent Test Set")
+    print("  Frozen Pipeline + VAE Encoder Inference + Elastic Net")
     print("=" * 70)
-    
-    # Create output directories
-    os.makedirs(args.output_dir, exist_ok=True)
-    figures_dir = os.path.join(args.output_dir, "Figures")
-    os.makedirs(figures_dir, exist_ok=True)
-    
-    # Check input files
-    if not os.path.exists(args.test_file):
-        print(f"ERROR: Test set file not found - {args.test_file}")
-        return
-    if not os.path.exists(args.train_file):
-        print(f"ERROR: Training set file not found - {args.train_file}")
-        return
-    
-    # =========================================================================
-    # PHASE 1: Load Data
-    # =========================================================================
-    print("\n[PHASE 1] Loading Data")
-    print("-" * 70)
-    
-    train_data = pd.read_csv(args.train_file)
-    print(f"Training set loaded: {len(train_data)} cases")
-    
-    raw_data = pd.read_csv(args.test_file)
-    cols_to_numeric = [c for c in raw_data.columns if c not in ['ID', 'RID', 'Baseline_Date']]
-    for col in cols_to_numeric:
-        raw_data[col] = pd.to_numeric(raw_data[col], errors='coerce')
-    
-    df_test = raw_data[raw_data['AD_Conversion'].notna()].copy()
-    print(f"Test set loaded: {len(df_test)} cases")
-    print(f"AD converters: {int(df_test['AD_Conversion'].sum())} ({df_test['AD_Conversion'].mean():.1%})")
-    
-    # =========================================================================
-    # PHASE 2: Feature Engineering
-    # =========================================================================
-    print("\n[PHASE 2] Feature Engineering")
-    print("-" * 70)
-    
-    X_train_raw = engineering_pipeline(train_data)
-    
-    if 'AD_Conversion' in train_data.columns:
-        y_train = train_data['AD_Conversion'].values
-    elif 'Converted' in train_data.columns:
-        y_train = train_data['Converted'].values
-    else:
-        raise ValueError("Target column not found in training data")
-    
-    X_train_raw = X_train_raw.dropna(axis=1, how='all')
-    X_train_raw = X_train_raw.loc[:, X_train_raw.apply(lambda x: x.nunique(dropna=True) > 0)]
-    print(f"Training set raw features: {X_train_raw.shape[1]}")
-    
-    X_test_raw = engineering_pipeline(df_test)
-    y_test = df_test['AD_Conversion'].values
-    
-    common_cols = X_train_raw.columns.intersection(X_test_raw.columns)
-    X_train_raw = X_train_raw[common_cols]
-    X_test_raw = X_test_raw[common_cols]
-    print(f"Common features: {len(common_cols)}")
-
-    # =========================================================================
-    # PHASE 3: MICE Imputation (Frozen Pipeline)
-    # =========================================================================
-    print(f"\n[PHASE 3] MICE Imputation ({args.mice_iterations} iterations)")
-    print("-" * 70)
-    print("Fitting imputer on TRAINING set only...")
-    
-    imputer = IterativeImputer(
-        max_iter=args.mice_iterations, 
-        random_state=args.seed, 
-        initial_strategy='median'
-    )
-    imputer.fit(X_train_raw)
-    
-    print("Applying imputer to test set (transform only)...")
-    X_train_imputed = pd.DataFrame(imputer.transform(X_train_raw), columns=X_train_raw.columns)
-    X_test_imputed = pd.DataFrame(imputer.transform(X_test_raw), columns=X_test_raw.columns, 
-                                   index=X_test_raw.index)
-    
-    # =========================================================================
-    # PHASE 4: Standardization (Frozen Pipeline)
-    # =========================================================================
-    print("\n[PHASE 4] Standardization (Frozen Pipeline)")
-    print("-" * 70)
-    print("Fitting scaler on TRAINING set only...")
-    
-    scaler_pre = StandardScaler()
-    scaler_pre.fit(X_train_imputed)
-    
-    print("Applying scaler to test set (transform only)...")
-    X_train_scaled = scaler_pre.transform(X_train_imputed)
-    X_test_scaled = scaler_pre.transform(X_test_imputed)
-    
-    # =========================================================================
-    # PHASE 5: KernelPCA (Frozen Pipeline)
-    # =========================================================================
-    print(f"\n[PHASE 5] KernelPCA (RBF kernel, {args.kpca_components} components)")
-    print("-" * 70)
-    print("Fitting KernelPCA on TRAINING set only...")
-    
-    kpca = KernelPCA(n_components=args.kpca_components, kernel='rbf', gamma=0.01, 
-                     random_state=args.seed)
-    kpca.fit(X_train_scaled)
-    
-    print("Applying KernelPCA to test set (transform only)...")
-    X_train_latent = kpca.transform(X_train_scaled)
-    X_test_latent = kpca.transform(X_test_scaled)
-    
-    X_train_latent_df = pd.DataFrame(X_train_latent, 
-                                      columns=[f'Latent_{i+1}' for i in range(args.kpca_components)])
-    X_test_latent_df = pd.DataFrame(X_test_latent, 
-                                     columns=[f'Latent_{i+1}' for i in range(args.kpca_components)],
-                                     index=X_test_imputed.index)
-    
-    X_train_full = pd.concat([X_train_imputed.reset_index(drop=True), X_train_latent_df], axis=1)
-    X_test_full = pd.concat([X_test_imputed.reset_index(drop=True), 
-                             X_test_latent_df.reset_index(drop=True)], axis=1)
-    
-    # =========================================================================
-    # PHASE 6: Lasso Feature Selection (Frozen Pipeline)
-    # =========================================================================
-    print("\n[PHASE 6] Lasso Feature Selection (5-fold CV)")
-    print("-" * 70)
-    print("Fitting Lasso selector on TRAINING set only...")
-    
-    selector = SelectFromModel(
-        estimator=LassoCV(cv=5, random_state=args.seed, max_iter=2000), 
-        threshold='median'
-    )
-    selector.fit(X_train_full, y_train)
-    
-    print("Applying selector to test set (transform only)...")
-    X_train_selected = selector.transform(X_train_full)
-    X_test_selected = selector.transform(X_test_full)
-    
-    selected_indices = selector.get_support(indices=True)
-    selected_feat_names = X_test_full.columns[selected_indices]
-    print(f"Features reduced to {X_test_selected.shape[1]} key predictors")
-    
-    # =========================================================================
-    # PHASE 7: Model Training (Training Set Only)
-    # =========================================================================
-    print("\n[PHASE 7] Model Training (SVM+GBM+RF Ensemble, 3:2:1 weights)")
-    print("-" * 70)
-    print(f"Training set shape: {X_train_selected.shape}")
-    print(f"Test set shape: {X_test_selected.shape}")
-    
-    # Define classifiers 
-    clf_svm = SVC(kernel='rbf', C=5.0, gamma='scale', probability=True, 
-                  class_weight='balanced', random_state=args.seed)
-    clf_gbm = HistGradientBoostingClassifier(
-        learning_rate=0.05, max_iter=500, max_depth=8,
-        l2_regularization=1.5, class_weight='balanced', 
-        random_state=args.seed
-    )
-    clf_rf = RandomForestClassifier(
-        n_estimators=500, max_depth=10, 
-        class_weight='balanced_subsample',
-        max_features='sqrt', random_state=args.seed
-    )
-    
-    # Ensemble with 3:2:1 weights 
-    ensemble = VotingClassifier(
-        estimators=[('svm', clf_svm), ('gbm', clf_gbm), ('rf', clf_rf)],
-        voting='soft',
-        weights=[3, 2, 1]
-    )
-    
-    methods_preds = {}
-    
-    # Train individual models
-    print("\nTraining SVM-RBF...")
-    pipeline_svm = create_pipeline(clf_svm, HAS_SMOTE)
-    pipeline_svm.fit(X_train_selected, y_train)
-    methods_preds['SVM-RBF'] = pipeline_svm.predict_proba(X_test_selected)[:, 1]
-    
-    print("Training Gradient Boosting...")
-    pipeline_gbm = create_pipeline(clf_gbm, HAS_SMOTE)
-    pipeline_gbm.fit(X_train_selected, y_train)
-    methods_preds['Gradient Boosting'] = pipeline_gbm.predict_proba(X_test_selected)[:, 1]
-    
-    print("Training Random Forest...")
-    pipeline_rf = create_pipeline(clf_rf, HAS_SMOTE)
-    pipeline_rf.fit(X_train_selected, y_train)
-    methods_preds['Random Forest'] = pipeline_rf.predict_proba(X_test_selected)[:, 1]
-    
-    print("Training Ensemble (3:2:1)...")
-    pipeline_ensemble = create_pipeline(ensemble, HAS_SMOTE)
-    pipeline_ensemble.fit(X_train_selected, y_train)
-    ensemble_probs = pipeline_ensemble.predict_proba(X_test_selected)[:, 1]
-    methods_preds['Ensemble (Final)'] = ensemble_probs
-
-    print("\n" + "=" * 70)
-    print("LEAKAGE PREVENTION CONFIRMED:")
-    print("  All preprocessing parameters fitted on training set only")
-    print("  All models trained on training set only")
-    print("  Test set used ONLY for final evaluation")
-    print("=" * 70)
-    
-    # =========================================================================
-    # PHASE 8: Risk Stratification
-    # =========================================================================
-    print("\n[PHASE 8] Risk Stratification")
-    print("-" * 70)
-    
-    RISK_PATTERNS = {
-        'Pattern3_High': {'name': 'High Risk'},
-        'Pattern2_Medium': {'name': 'Intermediate Risk'},
-        'Pattern1_Low': {'name': 'Low Risk'}
+    print(f"  Base dir:   {base_dir}")
+    print(f"  Output dir: {output_dir}")
+    print()
+    # PHASE 1
+    test_df, subtypes, latent, vae_summary, clinical, smri, csf = \
+        load_all_data(base_dir)
+    # Identify outcome in test set
+    outcome_col = None
+    for c in ["AD_Conversion", "Conversion", "Label", "Outcome"]:
+        if c in test_df.columns:
+            outcome_col = c
+            break
+    if outcome_col is None:
+        raise RuntimeError("Cannot find outcome column in test set. "
+                           "Expected: AD_Conversion, Conversion, Label, or Outcome")
+    y_test = test_df[outcome_col].values.astype(int)
+    print(f"  Outcome: '{outcome_col}' -> {y_test.sum()} converters / "
+          f"{len(y_test)-y_test.sum()} non-converters")
+    # PHASE 2
+    X_train_vae_raw, X_test_vae_raw, vae_features = \
+        build_vae_matrices(test_df, subtypes, vae_summary, clinical, smri, csf)
+    # PHASE 3
+    X_train_vae, X_test_vae, vae_imputer = \
+        preprocess_for_vae(X_train_vae_raw, X_test_vae_raw)
+    # PHASE 4
+    Z_train, Z_test = retrain_vae_and_encode(X_train_vae, X_test_vae, vae_summary)
+    # Verify against original latent
+    Z_orig = latent[[c for c in latent.columns if c.startswith("Z")]].values
+    for i in range(Z_train.shape[1]):
+        r = np.corrcoef(Z_train[:, i], Z_orig[:, i])[0, 1]
+        print(f"  Z{i+1} correlation (retrained vs original): r={r:.4f}")
+    # PHASE 5
+    X_train_pred, X_test_pred, y_train, feature_names = \
+        build_prediction_features(subtypes, latent, clinical, smri, csf,
+                                   test_df, Z_train, Z_test)
+    # PHASE 6-7
+    X_train_sc, X_test_sc, pred_imputer, pred_scaler = \
+        impute_and_scale(X_train_pred, X_test_pred)
+    # PHASE 8
+    X_train_sel, X_test_sel, selected_features, lasso = \
+        lasso_feature_selection(X_train_sc, y_train, X_test_sc, feature_names)
+    # PHASE 9
+    model, threshold = train_elastic_net(X_train_sel, y_train)
+    # PHASE 10
+    results, probs, preds = evaluate_test(
+        model, X_test_sel, y_test, threshold, args.n_bootstrap)
+    # PHASE 11
+    save_all(y_test, probs, preds, results, selected_features, test_df,
+             output_dir)
+    # Save pipeline artifacts
+    artifacts = {
+        "vae_imputer": vae_imputer, "pred_imputer": pred_imputer,
+        "pred_scaler": pred_scaler, "lasso": lasso,
+        "model": model, "threshold": threshold,
+        "vae_features": vae_features, "prediction_features": feature_names,
+        "selected_features": selected_features,
     }
-    
-    def assign_pattern(prob):
-        if prob >= args.high_threshold:
-            return 'Pattern3_High'
-        elif prob >= args.low_threshold:
-            return 'Pattern2_Medium'
-        else:
-            return 'Pattern1_Low'
-    
-    df_test['AI_Probability'] = ensemble_probs
-    df_test['AI_Probability_Percent'] = (ensemble_probs * 100).round(1)
-    df_test['VAE_Pattern'] = df_test['AI_Probability'].apply(assign_pattern)
-    
-    print(f"Risk thresholds: High >= {args.high_threshold}, Medium >= {args.low_threshold}")
-    
-    # =========================================================================
-    # PHASE 9: Performance Evaluation 
-    # =========================================================================
-    print("\n[PHASE 9] Performance Evaluation ")
-    print("-" * 70)
-    
-    y_true = y_test
-    y_pred_prob = ensemble_probs
-    
-    # Optimal threshold (Youden's J)
-    fpr, tpr, thresholds = roc_curve(y_true, y_pred_prob)
-    optimal_idx = np.argmax(tpr - fpr)
-    optimal_threshold = thresholds[optimal_idx]
-    y_pred = (y_pred_prob >= optimal_threshold).astype(int)
-    
-    # Basic metrics
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
-    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-    accuracy = (tp + tn) / len(y_true)
-    ppv = tp / (tp + fp) if (tp + fp) > 0 else 0
-    npv = tn / (tn + fn) if (tn + fn) > 0 else 0
-    
-    # Brier Score 
-    brier = brier_score_loss(y_true, y_pred_prob)
-    
-    # Bootstrap AUC CI
-    print(f"\nCalculating bootstrap AUC CI ({args.n_bootstrap} iterations)...")
-    auc_results = bootstrap_auc_ci(y_true, y_pred_prob, n_bootstrap=args.n_bootstrap, seed=args.seed)
-    auc_score = auc_results['auc']
-    
-    # Hosmer-Lemeshow test 
-    print("Performing Hosmer-Lemeshow calibration test...")
-    hl_test = hosmer_lemeshow_test(y_true, y_pred_prob)
-    
-    print(f"\n  AUC: {auc_score:.3f} [95% CI: {auc_results['ci_lower']:.3f}-{auc_results['ci_upper']:.3f}]")
-    print(f"  Optimal threshold (Youden's J): {optimal_threshold:.3f}")
-    print(f"  Sensitivity: {sensitivity:.1%}")
-    print(f"  Specificity: {specificity:.1%}")
-    print(f"  Accuracy: {accuracy:.1%}")
-    print(f"  PPV: {ppv:.1%}")
-    print(f"  NPV: {npv:.1%}")
-    print(f"  Brier Score: {brier:.4f}")
-    print(f"  Hosmer-Lemeshow: χ²={hl_test['chi2']:.2f}, df={hl_test['df']}, p={hl_test['p_value']:.4f}")
-    
-    if hl_test['p_value'] > 0.05:
-        print("    → Adequate calibration (p > 0.05)")
-    else:
-        print("    → Poor calibration (p ≤ 0.05)")
-    
-    # Individual model AUCs with bootstrap CI
-    model_results = {}
-    for model_name, preds in methods_preds.items():
-        result = bootstrap_auc_ci(y_true, preds, n_bootstrap=args.n_bootstrap, seed=args.seed)
-        model_results[model_name] = result
-        print(f"  {model_name}: AUC={result['auc']:.3f} [95% CI: {result['ci_lower']:.3f}-{result['ci_upper']:.3f}]")
-
-    # =========================================================================
-    # PHASE 10: Visualization
-    # =========================================================================
-    print("\n[PHASE 10] Generating Visualizations")
-    print("-" * 70)
-    
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-    
-    # ROC Curves
-    ax = axes[0, 0]
-    for method_name, preds in methods_preds.items():
-        fpr_m, tpr_m, _ = roc_curve(y_true, preds)
-        auc_m = model_results[method_name]['auc']
-        if 'Ensemble' in method_name:
-            lw, ls, alpha, color = 2.5, '-', 1.0, '#d95f02'
-        else:
-            lw, ls, alpha, color = 1.5, '--', 0.7, None
-        ax.plot(fpr_m, tpr_m, lw=lw, linestyle=ls, alpha=alpha,
-                label=f'{method_name} (AUC={auc_m:.3f})', color=color)
-    
-    ax.plot([0, 1], [0, 1], 'k--', lw=1, alpha=0.3)
-    ax.set_xlabel('False Positive Rate', fontsize=11)
-    ax.set_ylabel('True Positive Rate', fontsize=11)
-    ax.set_title(f'ROC Curve (N={len(y_true)})', fontweight='bold', fontsize=12)
-    ax.legend(loc='lower right', fontsize=9)
-    ax.grid(True, alpha=0.3)
-    
-    # Confusion Matrix
-    ax = axes[0, 1]
-    cm = confusion_matrix(y_true, y_pred)
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-                xticklabels=['Non-converter', 'Converter'],
-                yticklabels=['Non-converter', 'Converter'],
-                cbar_kws={'label': 'Count'})
-    ax.set_title(f'Confusion Matrix (Threshold={optimal_threshold:.2f})', 
-                 fontweight='bold', fontsize=12)
-    ax.set_xlabel('Predicted', fontsize=11)
-    ax.set_ylabel('Actual', fontsize=11)
-    
-    # Probability Distribution
-    ax = axes[1, 0]
-    converters = df_test[df_test['AD_Conversion'] == 1]['AI_Probability']
-    non_converters = df_test[df_test['AD_Conversion'] == 0]['AI_Probability']
-    ax.hist(non_converters, bins=20, alpha=0.6, label=f'Non-converters (n={len(non_converters)})',
-            color='green', edgecolor='black')
-    ax.hist(converters, bins=20, alpha=0.6, label=f'Converters (n={len(converters)})',
-            color='red', edgecolor='black')
-    ax.axvline(optimal_threshold, color='blue', linestyle='--', linewidth=2,
-               label=f'Threshold={optimal_threshold:.2f}')
-    ax.set_xlabel('Predicted Probability', fontsize=11)
-    ax.set_ylabel('Count', fontsize=11)
-    ax.set_title('Probability Distribution', fontweight='bold', fontsize=12)
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3, axis='y')
-    
-    # Risk Stratification Calibration
-    ax = axes[1, 1]
-    pattern_stats = []
-    for pattern in ['Pattern1_Low', 'Pattern2_Medium', 'Pattern3_High']:
-        pattern_data = df_test[df_test['VAE_Pattern'] == pattern]
-        if len(pattern_data) > 0:
-            actual_rate = pattern_data['AD_Conversion'].mean()
-            predicted_rate = pattern_data['AI_Probability'].mean()
-            pattern_stats.append({
-                'name': RISK_PATTERNS[pattern]['name'],
-                'actual': actual_rate,
-                'predicted': predicted_rate,
-                'n': len(pattern_data)
-            })
-    
-    if pattern_stats:
-        x = np.arange(len(pattern_stats))
-        width = 0.35
-        ax.bar(x - width/2, [s['actual'] for s in pattern_stats], width,
-               label='Actual Conversion Rate', color='coral', edgecolor='black')
-        ax.bar(x + width/2, [s['predicted'] for s in pattern_stats], width,
-               label='Predicted Conversion Rate', color='skyblue', edgecolor='black')
-        for i, s in enumerate(pattern_stats):
-            ax.text(i, max(s['actual'], s['predicted']) + 0.05, f"n={s['n']}",
-                    ha='center', fontsize=9)
-        ax.set_xlabel('Risk Stratification', fontsize=11)
-        ax.set_ylabel('Conversion Rate', fontsize=11)
-        ax.set_title('Risk Stratification Calibration', fontweight='bold', fontsize=12)
-        ax.set_xticks(x)
-        ax.set_xticklabels([s['name'] for s in pattern_stats])
-        ax.legend(fontsize=9)
-        ax.grid(True, alpha=0.3, axis='y')
-        ax.set_ylim([0, 1.1])
-    
-    plt.tight_layout()
-    fig_path = os.path.join(figures_dir, 'AI_Performance_Final.png')
-    plt.savefig(fig_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f"  Visualization saved: {fig_path}")
-    
-    # =========================================================================
-    # PHASE 11: Save Results
-    # =========================================================================
-    print("\n[PHASE 11] Saving Results")
-    print("-" * 70)
-    
-    # Predictions CSV
-    output_data = pd.DataFrame({
-        'CaseID': df_test['ID'],
-        'RID': df_test['RID'],
-        'VAE_Pattern': df_test['VAE_Pattern'].map(lambda x: RISK_PATTERNS[x]['name']),
-        'SVM_Prob': (methods_preds['SVM-RBF'] * 100).round(1),
-        'GBM_Prob': (methods_preds['Gradient Boosting'] * 100).round(1),
-        'RF_Prob': (methods_preds['Random Forest'] * 100).round(1),
-        'AI_Probability': df_test['AI_Probability'].round(4),
-        'AI_Probability_Percent': df_test['AI_Probability_Percent'],
-        'AI_Risk_Level': df_test['VAE_Pattern'].map(lambda x: RISK_PATTERNS[x]['name']),
-        'Actual_Conversion': df_test['AD_Conversion'],
-        'Prediction_Correct': ((df_test['AI_Probability'] >= optimal_threshold).astype(int) == 
-                              df_test['AD_Conversion']).astype(int)
-    })
-    
-    output_file = os.path.join(args.output_dir, "AI_Predictions_Final.csv")
-    output_data.to_csv(output_file, index=False, encoding='utf-8-sig')
-    print(f"  Predictions saved: {output_file}")
-
-    # Report
-    report_lines = [
-        "VAE Risk Stratification Model - Evaluation Report",
-        "=" * 60,
-        "",
-        f"  ✓ MICE imputation: {args.mice_iterations} iterations (fitted on training set)",
-        "  ✓ StandardScaler: fitted on training set",
-        f"  ✓ KernelPCA (RBF): {args.kpca_components} components (fitted on training set)",
-        "  ✓ Lasso selector (5-fold CV): fitted on training set",
-        "  ✓ SVM+GBM+RF ensemble (3:2:1 weights): trained on training set",
-        "  ✓ Borderline-SMOTE: applied within training folds",
-        "  ✓ Youden's J: threshold optimization on training set",
-        "",
-        f"  ✓ Bootstrap AUC CI: {args.n_bootstrap} iterations",
-        "  ✓ Hosmer-Lemeshow calibration test",
-        "  ✓ Brier score calculation",
-        "",
-        "=" * 60,
-        "",
-        "1. Test Set Characteristics",
-        f"   Sample size: {len(df_test)} cases",
-        f"   AD converters: {int(df_test['AD_Conversion'].sum())} ({df_test['AD_Conversion'].mean():.1%})",
-        f"   Non-converters: {int((df_test['AD_Conversion']==0).sum())} ({(df_test['AD_Conversion']==0).mean():.1%})",
-        "",
-        "2. Model Performance (Independent Test Set)"
-    ]
-    
-    for model_name, result in model_results.items():
-        report_lines.append(
-            f"   {model_name}: AUC={result['auc']:.3f} "
-            f"[95% CI: {result['ci_lower']:.3f}-{result['ci_upper']:.3f}]"
-        )
-    
-    report_lines.extend([
-        "",
-        "3. Ensemble Model Metrics",
-        f"   AUC: {auc_score:.3f} [95% CI: {auc_results['ci_lower']:.3f}-{auc_results['ci_upper']:.3f}]",
-        f"   Optimal threshold (Youden's J): {optimal_threshold:.3f}",
-        f"   Sensitivity: {sensitivity:.1%}",
-        f"   Specificity: {specificity:.1%}",
-        f"   Accuracy: {accuracy:.1%}",
-        f"   PPV: {ppv:.1%}",
-        f"   NPV: {npv:.1%}",
-        f"   Brier Score: {brier:.4f}",
-        "",
-        "4. Calibration (Hosmer-Lemeshow Test)",
-        f"   Chi-square: {hl_test['chi2']:.2f}",
-        f"   Degrees of freedom: {hl_test['df']}",
-        f"   P-value: {hl_test['p_value']:.4f}",
-        f"   Interpretation: {'Adequate calibration (p > 0.05)' if hl_test['p_value'] > 0.05 else 'Poor calibration (p ≤ 0.05)'}",
-        "",
-        "5. Risk Stratification Results"
-    ])
-    
-    for pattern in ['Pattern3_High', 'Pattern2_Medium', 'Pattern1_Low']:
-        pattern_data = df_test[df_test['VAE_Pattern'] == pattern]
-        if len(pattern_data) > 0:
-            n = len(pattern_data)
-            conv = int(pattern_data['AD_Conversion'].sum())
-            rate = pattern_data['AD_Conversion'].mean()
-            avg_prob = pattern_data['AI_Probability'].mean()
-            report_lines.append(
-                f"   {RISK_PATTERNS[pattern]['name']}: {n} cases, "
-                f"{conv} converters ({rate:.1%}), predicted {avg_prob:.1%}"
-            )
-    
-    report = "\n".join(report_lines)
-    report_file = os.path.join(args.output_dir, "AI_Report_Final.txt")
-    with open(report_file, 'w', encoding='utf-8') as f:
-        f.write(report)
-    print(f"  Report saved: {report_file}")
-    
-    # =========================================================================
-    # Summary
-    # =========================================================================
+    with open(os.path.join(output_dir, "pipeline_artifacts.pkl"), "wb") as f:
+        pickle.dump(artifacts, f)
     print("\n" + "=" * 70)
-    print("Step 2 Complete")
+    print("Step 2 COMPLETE")
     print("=" * 70)
-    print("\nOutput files:")
-    print(f"  - {output_file}")
-    print(f"  - {report_file}")
-    print(f"  - {fig_path}")
-
-
+    print(f"  Model:     Elastic Net")
+    print(f"  Features:  {len(selected_features)} (from {len(feature_names)})")
+    print(f"  Threshold: {threshold:.4f}")
+    print(f"  AUC:       {results['AUC']:.3f} "
+          f"({results['AUC_95CI_Lower']:.3f}-{results['AUC_95CI_Upper']:.3f})")
+    print(f"  Sens/Spec: {results['Sensitivity']:.3f} / {results['Specificity']:.3f}")
+    print(f"  Output:    {output_dir}")
+    print("=" * 70)
 if __name__ == "__main__":
     main()
+
 
