@@ -135,6 +135,7 @@ outcome_cols_to_add <- setdiff(colnames(outcome), colnames(assignments))
 outcome_slim <- outcome[, c("ID", intersect(outcome_cols_to_add, colnames(outcome))), drop = FALSE]
 df <- assignments %>%
   left_join(clinical_slim, by = "ID") %>%
+  left_join(outcome_slim, by = "ID") %>%
   left_join(mri_data, by = "ID") %>%
   left_join(csf_data, by = "ID")
 # Ensure AD_Conversion exists (from assignments)
@@ -145,6 +146,11 @@ cat(sprintf("  Merged: %d rows, %d cols\n", nrow(df), ncol(df)))
 cat(sprintf("  Columns check: AGE=%s, SEX=%s, EDUCATION=%s, AD_Conversion=%s\n",
             "AGE" %in% colnames(df), "SEX" %in% colnames(df),
             "EDUCATION" %in% colnames(df), "AD_Conversion" %in% colnames(df)))
+
+time_candidates <- c("Followup_Years", "Followup_Months", "Time_to_Event")
+available_time_cols <- intersect(time_candidates, colnames(df))
+cat(sprintf("  Time columns available: %s\n",
+            ifelse(length(available_time_cols) > 0, paste(available_time_cols, collapse = ", "), "none")))
 # Fix SEX encoding: round to 0/1 (data has one value=0.88 from encoding error)
 if ("SEX" %in% colnames(df)) {
   n_odd <- sum(df$SEX != 0 & df$SEX != 1, na.rm = TRUE)
@@ -256,9 +262,28 @@ if ("APOE4_DOSAGE" %in% colnames(df)) {
   p3  <- summary(logit3)$coefficients[, 4]
   print(round(cbind(or3, P = p3), 4))
 }
-# --- Cox regression (sensitivity, using proxy time) ---
-cat("\n  === Cox Regression (sensitivity analysis, proxy time) ===\n")
-df$surv_time <- ifelse(df$AD_Conversion == 1, 1, 2)
+# --- Cox regression ---
+time_col_used <- NULL
+time_multiplier <- 1
+if ("Followup_Years" %in% colnames(df) && sum(!is.na(df$Followup_Years)) > 20) {
+  time_col_used <- "Followup_Years"
+  time_multiplier <- 1
+} else if ("Followup_Months" %in% colnames(df) && sum(!is.na(df$Followup_Months)) > 20) {
+  time_col_used <- "Followup_Months"
+  time_multiplier <- 1 / 12
+} else if ("Time_to_Event" %in% colnames(df) && sum(!is.na(df$Time_to_Event)) > 20) {
+  time_col_used <- "Time_to_Event"
+  time_multiplier <- 1 / 12
+}
+
+if (!is.null(time_col_used)) {
+  cat(sprintf("\n  === Cox Regression (using %s) ===\n", time_col_used))
+  df$surv_time <- as.numeric(df[[time_col_used]]) * time_multiplier
+} else {
+  cat("\n  === Cox Regression (sensitivity analysis, proxy time) ===\n")
+  df$surv_time <- ifelse(df$AD_Conversion == 1, 1, 2)
+}
+
 surv_obj <- Surv(df$surv_time, df$AD_Conversion)
 cox1 <- coxph(surv_obj ~ Subtype_cox, data = df)
 cat("\n  --- Unadjusted Cox ---\n")
@@ -305,13 +330,13 @@ for (i in 1:nrow(hr_all)) {
 }
 write.csv(hr_all, file.path(output_dir, "Cox_Hazard_Ratios.csv"),
           row.names = FALSE)
-# PH assumption (may fail with proxy time — wrap in tryCatch)
+# PH assumption
 tryCatch({
   ph_test <- cox.zph(cox2)
   cat("\n  Proportional hazards test:\n")
   print(ph_test)
 }, error = function(e) {
-  cat(sprintf("\n  PH test skipped (proxy time): %s\n", e$message))
+  cat(sprintf("\n  PH test skipped: %s\n", e$message))
 })
 # Logistic regression as primary (no time assumption)
 cat("\n  --- Logistic regression OR summary ---\n")
