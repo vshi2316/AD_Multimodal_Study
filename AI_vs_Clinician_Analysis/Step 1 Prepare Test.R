@@ -21,6 +21,8 @@ option_list <- list(
               help = "Minimum age [default: %default]"),
   make_option(c("--max_age"), type = "integer", default = 95,
               help = "Maximum age [default: %default]"),
+  make_option(c("--followup_months"), type = "integer", default = 36,
+              help = "Follow-up window in months for conversion endpoint [default: %default]"),
   make_option(c("--seed"), type = "integer", default = 2024,
               help = "Random seed for reproducibility [default: %default]")
 )
@@ -33,6 +35,20 @@ set.seed(opt$seed)
 
 # Create output directory
 dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
+
+parse_exam_date <- function(x) {
+  as.Date(x, tryFormats = c("%m/%d/%Y", "%Y-%m-%d", "%Y/%m/%d"))
+}
+
+viscode_to_months <- function(viscode) {
+  viscode <- tolower(trimws(as.character(viscode)))
+  case_when(
+    viscode %in% c("bl", "sc", "scmri") ~ 0,
+    str_detect(viscode, "^m\\d+$") ~ as.numeric(str_remove(viscode, "^m")),
+    str_detect(viscode, "^y\\d+$") ~ as.numeric(str_remove(viscode, "^y")) * 12,
+    TRUE ~ NA_real_
+  )
+}
 
 # ==============================================================================
 # Define File Paths
@@ -62,26 +78,58 @@ dx_data <- read_csv(path_dx, show_col_types = FALSE)
 baseline_mci <- dx_data %>%
   filter(VISCODE %in% c("bl", "sc"), DXMCI == 1) %>%
   select(RID, Baseline_Date = EXAMDATE) %>%
-  distinct(RID, .keep_all = TRUE) %>%
-  mutate(Baseline_Date = as.Date(Baseline_Date, format = "%m/%d/%Y"))
+  mutate(Baseline_Date = parse_exam_date(Baseline_Date)) %>%
+  arrange(RID, Baseline_Date) %>%
+  distinct(RID, .keep_all = TRUE)
 
 cat(sprintf("  Baseline MCI patients: %d\n", nrow(baseline_mci)))
 
-# Determine AD conversion outcome
+# Determine AD conversion outcome within the prespecified follow-up window
 patient_outcomes <- data.frame()
 for (pid in baseline_mci$RID) {
   records <- dx_data %>% filter(RID == pid)
-  is_converter <- any(records$DXAD == 1, na.rm = TRUE)
+  baseline_date <- baseline_mci %>% filter(RID == pid) %>% pull(Baseline_Date) %>% .[1]
+
+  records <- records %>%
+    mutate(
+      ExamDate_Parsed = if ("EXAMDATE" %in% names(records)) parse_exam_date(EXAMDATE) else as.Date(NA),
+      Months_From_Baseline = NA_real_
+    )
+
+  if (!is.na(baseline_date) && "EXAMDATE" %in% names(records)) {
+    records$Months_From_Baseline <- as.numeric(difftime(records$ExamDate_Parsed, baseline_date, units = "days")) / 30.44
+  }
+
+  if ("VISCODE" %in% names(records)) {
+    vis_months <- viscode_to_months(records$VISCODE)
+    use_viscode <- is.na(records$Months_From_Baseline)
+    records$Months_From_Baseline[use_viscode] <- vis_months[use_viscode]
+  }
+
+  records_window <- records %>%
+    filter(!is.na(Months_From_Baseline)) %>%
+    filter(Months_From_Baseline > 0, Months_From_Baseline <= opt$followup_months)
+
+  is_converter <- any(records_window$DXAD == 1, na.rm = TRUE)
+  conversion_months <- if (is_converter) {
+    min(records_window$Months_From_Baseline[records_window$DXAD == 1], na.rm = TRUE)
+  } else {
+    NA_real_
+  }
+
   patient_outcomes <- rbind(patient_outcomes, data.frame(
     RID = pid, 
-    AD_Conversion = ifelse(is_converter, 1, 0)
+    AD_Conversion = ifelse(is_converter, 1, 0),
+    Conversion_Window_Months = opt$followup_months,
+    Time_to_Conversion_Months = conversion_months
   ))
 }
 
 mci_cohort <- baseline_mci %>% 
   left_join(patient_outcomes, by = "RID")
 
-cat(sprintf("  AD converters: %d (%.1f%%)\n", 
+cat(sprintf("  AD converters within %d months: %d (%.1f%%)\n", 
+            opt$followup_months,
             sum(mci_cohort$AD_Conversion), 
             100 * mean(mci_cohort$AD_Conversion)))
 
@@ -327,7 +375,7 @@ desired_cols_base <- c("ID", "RID", "Age", "Gender", "Education", "MMSE_Baseline
                        "ADAS13", "CDRSB", "FAQTOTAL", "APOE4_Positive", "APOE4_Copies",
                        "ABETA42", "ABETA40", "TAU_TOTAL", "PTAU181", "STATUS")
 st_cols <- grep("^ST", names(output_df), value = TRUE)
-desired_cols_end <- c("AD_Conversion", "completeness", "Baseline_Date")
+desired_cols_end <- c("AD_Conversion", "Conversion_Window_Months", "Time_to_Conversion_Months", "completeness", "Baseline_Date")
 
 final_cols <- c(desired_cols_base, st_cols, desired_cols_end)
 final_cols <- final_cols[final_cols %in% names(output_df)]
@@ -356,7 +404,8 @@ cat("Independent Test Set Summary\n")
 cat("============================================================\n")
 cat(sprintf("Output file: %s\n", out_csv))
 cat(sprintf("Final sample size: %d (Target: %d)\n", nrow(output_df_final), opt$target_n))
-cat(sprintf("AD converters: %d (%.1f%%)\n", 
+cat(sprintf("AD converters within %d months: %d (%.1f%%)\n", 
+            opt$followup_months,
             sum(output_df_final$AD_Conversion), 
             100 * mean(output_df_final$AD_Conversion)))
 cat(sprintf("Non-converters: %d (%.1f%%)\n", 
