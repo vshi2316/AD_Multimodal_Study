@@ -1,5 +1,4 @@
-[README.md](https://github.com/user-attachments/files/26176397/README.md)
-# AD Multimodal Study
+[README.md](https://github.com/user-attachments/files/26210632/README.md)# AD Multimodal Study
 
 Code and analysis workflow for multimodal subtype discovery, prognostic modelling, external validation, and AI-versus-clinician benchmarking in Alzheimer's disease research.
 
@@ -224,8 +223,8 @@ The following points are important when interpreting or extending the code:
 
 This repository preserves the actual analysis code, but several manuscript-relevant caveats should be noted.
 
-1. `step14_cluster_validation.R` uses proxy survival time for Cox sensitivity analysis. If real follow-up time is to be reported, use real time-to-event outputs from your curated data pipeline rather than the proxy-time Cox model.
-2. In the AI-versus-clinician branch, expert forms ask for 3-year conversion probabilities, whereas the generated holdout labels are stored as `AD_Conversion`. Endpoint harmonization should be verified before final manuscript submission.
+1. `step14_cluster_validation.R` now checks for real follow-up variables first and falls back to proxy survival time only when no usable time-to-event variable is available.
+2. `AI_vs_Clinician_Analysis/Step 1 Prepare Test.R` now generates a strict 36-month conversion endpoint so that the public holdout label aligns more closely with the expert 3-year assessment task.
 3. `step11_predictive_modeling.R` uses MICE with `complete(mice_obj, 1)` rather than pooled Rubin-rule estimates.
 4. Several preprocessing scripts are legacy or broader than the final manuscript path. In particular, `step5_preprocess_PET.py` is not part of the final primary analysis path.
 5. The file `step20_AIBL _Validation.R` contains a space in the filename. Preserve the exact filename when calling it from the shell.
@@ -274,3 +273,4 @@ If you use this repository, please cite the associated manuscript and the origin
 ## License
 
 This repository is released under the MIT License. See `LICENSE`.
+
