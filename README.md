@@ -209,30 +209,6 @@ R packages used across scripts include:
 - `AI_vs_Clinician_Analysis\Step 3 Expert Assessment Workflow.R` generates neurologist assessment forms and templates.
 - `AI_vs_Clinician_Analysis\Step 4 AI vs Expert Comparison Analysis` computes ROC, DeLong, calibration, reliability, NRI/IDI, and decision-curve outputs.
 
-## Core manuscript alignment notes
-
-The following points are important when interpreting or extending the code:
-
-- The VAE is implemented with a modality-weighted reconstruction loss so that CSF, clinical, and MRI blocks contribute equally despite unequal dimensionality.
-- The final VAE feature list is not hard-coded in the manuscript text; it is stored in `vae_summary.json`, which should be treated as the executable record of the final discovery input matrix.
-- A4 and AIBL are implemented as direct latent-space transportability analyses using centroid-based subtype assignment.
-- HABS is implemented as framework adaptation with cohort-specific Firth logistic regression, not direct transfer of the ADNI-trained subtype model.
-- The AI holdout workflow leaves unavailable holdout features such as `GDS` as missing and lets the discovery-fitted imputation pipeline provide the reference value. Holdout VAE inputs and prediction features both use discovery-fitted preprocessing.
-- `step14_cluster_validation.R` now writes `Cox_Time_Source_Metadata.csv` so the manuscript can explicitly report whether Cox analyses used archived follow-up time or a proxy fallback.
-- `step16_habs_validation.R` now writes `step16_manuscript_summary.csv` for manuscript-facing HABS sample size, event count, event rate, and AUC reporting.
-- `step20_AIBL _Validation.R` and `step21_A4_validation.R` now write cohort summary CSV files consumed by `step18_evidence_synthesis.R`.
-- `step18_evidence_synthesis.R` now relies on direct step outputs whenever available and no longer falls back to hardcoded holdout metrics.
-
-## Important caveats
-
-This repository preserves the actual analysis code, but several manuscript-relevant caveats should be noted.
-
-1. `step14_cluster_validation.R` now checks for real follow-up variables first and falls back to proxy survival time only when no usable time-to-event variable is available.
-2. `AI_vs_Clinician_Analysis/Step 1 Prepare Test.R` now generates a strict 36-month conversion endpoint so that the public holdout label aligns more closely with the expert 3-year assessment task.
-3. `step11_predictive_modeling.R` uses MICE with `complete(mice_obj, 1)` rather than pooled Rubin-rule estimates.
-4. Several preprocessing scripts are legacy or broader than the final manuscript path. In particular, `step5_preprocess_PET.py` is not part of the final primary analysis path.
-5. The file `step20_AIBL _Validation.R` contains a space in the filename. Preserve the exact filename when calling it from the shell.
-6. `step18_evidence_synthesis.R` should be run only after the holdout branch, HABS validation, and A4/AIBL validation summaries have been generated.
 
 ## Example commands
 
