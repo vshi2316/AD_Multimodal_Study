@@ -49,6 +49,14 @@ format_result <- function(auc, lower, upper) {
   sprintf("%.3f (%.3f-%.3f)", auc, lower, upper)
 }
 
+extract_ci_lower <- function(result_text) {
+  as.numeric(sub("-.*", "", sub(".*\\(", "", result_text)))
+}
+
+extract_ci_upper <- function(result_text) {
+  as.numeric(sub("\\)$", "", sub(".*-", "", result_text)))
+}
+
 cat("==============================================================================\n")
 cat("Step 18: Structured Evidence Synthesis\n")
 cat("==============================================================================\n\n")
@@ -228,8 +236,8 @@ auc_rows <- master_table %>%
   filter(grepl("AUC", Primary_Metric, fixed = TRUE)) %>%
   mutate(
     AUC = as.numeric(sub(" .*", "", Result)),
-    CI_Lower = as.numeric(sub(".*\((.*)-.*", "\\1", Result)),
-    CI_Upper = as.numeric(sub(".*-(.*)\)", "\\1", Result)),
+    CI_Lower = vapply(Result, extract_ci_lower, numeric(1)),
+    CI_Upper = vapply(Result, extract_ci_upper, numeric(1)),
     Plot_Group = Validation_Dimension
   )
 
