@@ -119,7 +119,7 @@ TEST_TO_VAE_MAP = {
     "APOE4":     "APOE4_Positive",
     "MMSE":      "MMSE_Baseline",
     "EDUCATION": "Education",
-    "GDS":       None,  # MISSING in test set -> fill with 0
+    "GDS":       None,
 }
 # Prediction feature mapping: training col -> test col
 TRAIN_TO_TEST_MAP = {
@@ -180,8 +180,7 @@ def build_vae_matrices(test_df, subtypes, vae_summary, clinical, smri, csf):
         if vf in TEST_TO_VAE_MAP:
             tc = TEST_TO_VAE_MAP[vf]
             if tc is None:
-                X_test[:, i] = 0.0
-                print(f"  {vf:>25s} -> FILLED WITH 0 (missing in test set)")
+                print(f"  {vf:>25s} -> LEFT AS NaN (missing in test set; discovery imputer will supply reference value)")
             elif tc in test_df.columns:
                 X_test[:, i] = pd.to_numeric(test_df[tc], errors="coerce").values
             else:
@@ -240,46 +239,28 @@ def build_vae_matrices(test_df, subtypes, vae_summary, clinical, smri, csf):
 # ==============================================================================
 def preprocess_for_vae(X_train_raw, X_test_raw, winsorize_sd=3.0):
     """
-    Training data is already z-score (from step7 preprocessing).
-    Test data is RAW scale (original clinical values).
-    
+    Leakage free preprocessing for VAE inputs.
+
+    All imputation and scaling parameters are fit on the discovery data and
+    then applied unchanged to the holdout data.
+
     Strategy:
-      1. Median impute training (fitted on training)
-      2. Median impute test (fitted on test, since scales differ)
-      3. Z-score standardize test set to match training scale
-         (using test set's own mean/sd — this is NOT data leakage,
-          it's the same operation step7 applied to training data)
-      4. Winsorize both at +/-3 SD using training statistics
+      1. Median impute training data and transform test data with the same imputer
+      2. Fit StandardScaler on training data and transform test data with the same scaler
+      3. Winsorize both matrices at +/- winsorize_sd using training statistics
     """
     print("\n[PHASE 3] Preprocessing for VAE...")
-    # Detect scale mismatch
     train_means = np.nanmean(X_train_raw, axis=0)
     test_means  = np.nanmean(X_test_raw, axis=0)
-    scale_ratio = np.nanmedian(np.abs(test_means) / (np.abs(train_means) + 1e-8))
     print(f"  Scale check: train mean range [{train_means.min():.2f}, {train_means.max():.2f}]")
     print(f"  Scale check: test  mean range [{test_means.min():.2f}, {test_means.max():.2f}]")
-    print(f"  Scale ratio (median): {scale_ratio:.1f}x")
-    # Step 1: Median impute training
     train_imputer = SimpleImputer(strategy="median")
     X_train = train_imputer.fit_transform(X_train_raw)
-    # Step 2: Median impute test (separate imputer since scales differ)
-    test_imputer = SimpleImputer(strategy="median")
-    X_test = test_imputer.fit_transform(X_test_raw)
-    # Step 3: Z-score standardize test set if scale mismatch detected
-    if scale_ratio > 5:
-        print(f"  SCALE MISMATCH DETECTED (ratio={scale_ratio:.0f}x)")
-        print(f"  Training data is z-score (step7), test data is raw scale")
-        print(f"  Applying z-score standardization to test set...")
-        test_mu  = X_test.mean(axis=0)
-        test_std = X_test.std(axis=0)
-        test_std[test_std < 1e-12] = 1.0  # avoid division by zero
-        X_test = (X_test - test_mu) / test_std
-        print(f"  Test set after z-score: mean range [{X_test.mean(axis=0).min():.3f}, "
-              f"{X_test.mean(axis=0).max():.3f}], "
-              f"sd range [{X_test.std(axis=0).min():.3f}, {X_test.std(axis=0).max():.3f}]")
-    else:
-        print(f"  Scales appear matched, no additional standardization needed")
-    # Step 4: Winsorize using TRAINING statistics
+    X_test = train_imputer.transform(X_test_raw)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+    print("  Applied discovery-fitted median imputation and scaling to holdout VAE inputs")
     means = X_train.mean(axis=0)
     stds  = X_train.std(axis=0)
     n_clip_train, n_clip_test = 0, 0
@@ -294,7 +275,7 @@ def preprocess_for_vae(X_train_raw, X_test_raw, winsorize_sd=3.0):
         X_test[:, i]  = np.clip(X_test[:, i], lo, hi)
     print(f"  Winsorized at +/-{winsorize_sd} SD: "
           f"{n_clip_train} train, {n_clip_test} test values clipped")
-    return X_train, X_test, train_imputer
+    return X_train, X_test, train_imputer, scaler
 # ==============================================================================
 # PHASE 4: Retrain VAE on training data + encode test set
 # ==============================================================================
@@ -380,7 +361,7 @@ def build_prediction_features(subtypes, latent, clinical, smri, csf,
         elif feat in TRAIN_TO_TEST_MAP:
             tc = TRAIN_TO_TEST_MAP[feat]
             if tc is None:
-                X_test_list.append(np.zeros(len(test_df)))
+                X_test_list.append(np.full(len(test_df), np.nan))
                 used_features.append(feat)
             elif tc in test_df.columns:
                 X_test_list.append(pd.to_numeric(test_df[tc], errors="coerce").values)
@@ -406,18 +387,7 @@ def build_prediction_features(subtypes, latent, clinical, smri, csf,
     common_idx = [feature_cols.index(f) for f in used_features]
     X_train_aligned = X_train[:, common_idx]
     X_test_aligned = np.column_stack(X_test_list)
-    # Z-score standardize raw test features (non-Z columns) to match
-    # training scale. Training data is already z-score from step7.
-    # Z1-Z3 are already in correct scale from VAE encoder (Phase 3-4).
-    raw_feature_idx = [i for i, f in enumerate(used_features)
-                       if not f.startswith("Z")]
-    if raw_feature_idx:
-        raw_test = X_test_aligned[:, raw_feature_idx]
-        raw_mu  = np.nanmean(raw_test, axis=0)
-        raw_std = np.nanstd(raw_test, axis=0)
-        raw_std[raw_std < 1e-12] = 1.0
-        X_test_aligned[:, raw_feature_idx] = (raw_test - raw_mu) / raw_std
-        print(f"  Z-scored {len(raw_feature_idx)} raw test features to match training scale")
+    print("  Raw holdout prediction features retained for discovery-fitted imputation and scaling")
     # Circularity check
     for pat in ["FAQ", "ADAS13", "CDRSB"]:
         for f in used_features:
@@ -476,7 +446,7 @@ def train_elastic_net(X_train, y_train):
     }
     enet = LogisticRegression(
         penalty="elasticnet", solver="saga", max_iter=10000,
-        random_state=42, class_weight="balanced",
+        random_state=42,
     )
     grid = GridSearchCV(enet, param_grid, cv=5, scoring="roc_auc",
                         n_jobs=-1, refit=True)
@@ -555,6 +525,16 @@ def evaluate_test(model, X_test, y_test, threshold, n_bootstrap=2000):
 def save_all(y_test, probs, preds, results, selected_features, test_df,
              output_dir):
     print("\n[PHASE 11] Saving results and plots...")
+    if "Conversion_Window_Months" in test_df.columns:
+        endpoint_window = pd.to_numeric(
+            test_df["Conversion_Window_Months"], errors="coerce"
+        ).dropna()
+        if len(endpoint_window) > 0:
+            unique_windows = sorted(endpoint_window.unique())
+            if len(unique_windows) == 1:
+                results["Endpoint_Window_Months"] = int(unique_windows[0])
+            else:
+                results["Endpoint_Window_Months"] = [int(x) for x in unique_windows]
     # ROC Curve
     fpr, tpr, _ = roc_curve(y_test, probs)
     fig, ax = plt.subplots(figsize=(8, 8))
@@ -696,7 +676,7 @@ def main():
     X_train_vae_raw, X_test_vae_raw, vae_features = \
         build_vae_matrices(test_df, subtypes, vae_summary, clinical, smri, csf)
     # PHASE 3
-    X_train_vae, X_test_vae, vae_imputer = \
+    X_train_vae, X_test_vae, vae_imputer, vae_scaler = \
         preprocess_for_vae(X_train_vae_raw, X_test_vae_raw)
     # PHASE 4
     Z_train, Z_test = retrain_vae_and_encode(X_train_vae, X_test_vae, vae_summary)
@@ -725,7 +705,8 @@ def main():
              output_dir)
     # Save pipeline artifacts
     artifacts = {
-        "vae_imputer": vae_imputer, "pred_imputer": pred_imputer,
+        "vae_imputer": vae_imputer, "vae_scaler": vae_scaler,
+        "pred_imputer": pred_imputer,
         "pred_scaler": pred_scaler, "lasso": lasso,
         "model": model, "threshold": threshold,
         "vae_features": vae_features, "prediction_features": feature_names,
