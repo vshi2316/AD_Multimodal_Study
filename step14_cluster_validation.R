@@ -1,6 +1,3 @@
-################################################################################
-# Cluster stability and consensus validation for the 37-variable latent solution
-################################################################################
 suppressPackageStartupMessages({
   library(optparse)
   library(survival)
@@ -15,9 +12,17 @@ suppressPackageStartupMessages({
 
 option_list <- list(
   make_option(c("--data_dir"), type = "character", default = ".",
-              help = "Directory containing Clinical_data.csv, metabolites.csv, RNA_plasma.csv, and Womac_score_pain_function.csv [default: %default]"),
+              help = "Directory containing the discovery cohort input files [default: %default]"),
   make_option(c("--vae_dir"), type = "character", default = ".",
               help = "Directory containing subtype_assignments.csv and latent_representations.csv [default: %default]"),
+  make_option(c("--clinical_file"), type = "character", default = "Clinical_data.csv",
+              help = "Clinical input file [default: %default]"),
+  make_option(c("--mri_file"), type = "character", default = "RNA_plasma.csv",
+              help = "Structural MRI input file [default: %default]"),
+  make_option(c("--csf_file"), type = "character", default = "metabolites.csv",
+              help = "CSF input file [default: %default]"),
+  make_option(c("--outcome_file"), type = "character", default = "Womac_score_pain_function.csv",
+              help = "Outcome file containing AD conversion and archived follow up time columns [default: %default]"),
   make_option(c("--output_dir"), type = "character", default = "./step14_results",
               help = "Output directory [default: %default]"),
   make_option(c("--n_bootstrap"), type = "integer", default = 2000,
@@ -114,17 +119,17 @@ if (latent_available) {
   cat(sprintf("  Latent: %d x %d\n", nrow(latent_data), ncol(latent_data) - 1))
 }
 # Original data from 7A_CSF_Cohort
-clinical <- read.csv(file.path(data_dir, "Clinical_data.csv"),
+clinical <- read.csv(file.path(data_dir, opt$clinical_file),
                      stringsAsFactors = FALSE)
 cat(sprintf("  Clinical: %d x %d\n", nrow(clinical), ncol(clinical)))
-mri_data <- read.csv(file.path(data_dir, "RNA_plasma.csv"),
+mri_data <- read.csv(file.path(data_dir, opt$mri_file),
                      stringsAsFactors = FALSE)
 mri_cols <- grep("^ST\\d+", colnames(mri_data), value = TRUE)
 cat(sprintf("  MRI: %d features\n", length(mri_cols)))
-csf_data <- read.csv(file.path(data_dir, "metabolites.csv"),
+csf_data <- read.csv(file.path(data_dir, opt$csf_file),
                      stringsAsFactors = FALSE)
 cat(sprintf("  CSF: %d biomarkers\n", ncol(csf_data) - 1))
-outcome <- read.csv(file.path(data_dir, "Womac_score_pain_function.csv"),
+outcome <- read.csv(file.path(data_dir, opt$outcome_file),
                     stringsAsFactors = FALSE)
 cat(sprintf("  Outcome: %d rows\n", nrow(outcome)))
 # Merge all — drop overlapping columns from clinical to avoid .x/.y duplicates
@@ -283,6 +288,22 @@ if (!is.null(time_col_used)) {
   cat("\n  === Cox Regression (sensitivity analysis, proxy time) ===\n")
   df$surv_time <- ifelse(df$AD_Conversion == 1, 1, 2)
 }
+
+time_metadata <- data.frame(
+  Time_Source = ifelse(is.null(time_col_used), "proxy_time", time_col_used),
+  Used_Proxy_Time = is.null(time_col_used),
+  Available_Time_Columns = ifelse(length(available_time_cols) > 0,
+                                  paste(available_time_cols, collapse = ", "),
+                                  "none"),
+  Nonmissing_Time_Count = ifelse(is.null(time_col_used),
+                                 NA_integer_,
+                                 sum(!is.na(df[[time_col_used]]))),
+  Median_Survival_Time_Years = median(df$surv_time, na.rm = TRUE),
+  stringsAsFactors = FALSE
+)
+write.csv(time_metadata,
+          file.path(output_dir, "Cox_Time_Source_Metadata.csv"),
+          row.names = FALSE)
 
 surv_obj <- Surv(df$surv_time, df$AD_Conversion)
 cox1 <- coxph(surv_obj ~ Subtype_cox, data = df)
