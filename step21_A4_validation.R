@@ -51,6 +51,21 @@ if (all(c(opt$time_col, opt$event_col) %in% names(analysis))) {
   auc_out <- data.frame(AUC = as.numeric(auc(roc_obj)), CI_Lower = ci.auc(roc_obj)[1], CI_Upper = ci.auc(roc_obj)[3])
   write.csv(auc_out, file.path(opt$output_dir, "step21_a4_auc.csv"), row.names = FALSE)
 
+  summary_out <- data.frame(
+    Cohort = "A4",
+    Validation_Dimension = "Subtype Transportability",
+    N = nrow(analysis),
+    Events = sum(as.numeric(analysis[[opt$event_col]]), na.rm = TRUE),
+    Event_Rate = mean(as.numeric(analysis[[opt$event_col]]), na.rm = TRUE),
+    Time_Column = opt$time_col,
+    Event_Column = opt$event_col,
+    AUC = auc_out$AUC,
+    CI_Lower = auc_out$CI_Lower,
+    CI_Upper = auc_out$CI_Upper,
+    stringsAsFactors = FALSE
+  )
+  write.csv(summary_out, file.path(opt$output_dir, "step21_a4_summary.csv"), row.names = FALSE)
+
   pdf(file.path(opt$output_dir, "step21_a4_kaplan_meier.pdf"), width = 7, height = 6)
   print(ggsurvplot(km_fit, data = analysis, risk.table = TRUE, pval = TRUE))
   dev.off()
