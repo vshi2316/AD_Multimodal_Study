@@ -150,14 +150,41 @@ for (nm in names(subgroup_defs)) {
 subgroup_df <- bind_rows(subgroup_rows)
 
 perf <- bind_rows(
-  data.frame(Stratum = "HABS_Full_No_pTau217", auc_full),
-  data.frame(Stratum = "HABS_pTau217_Subset_Baseline", auc_base),
-  data.frame(Stratum = "HABS_pTau217_Subset_Complete", auc_complete)
+  data.frame(
+    Stratum = "HABS_Full_No_pTau217",
+    Analysis_Set = "Full cohort clinical only",
+    N = nrow(full_cohort),
+    Events = sum(full_cohort$AD_Conversion),
+    auc_full,
+    stringsAsFactors = FALSE
+  ),
+  data.frame(
+    Stratum = "HABS_pTau217_Subset_Baseline",
+    Analysis_Set = "Matched pTau217 subset baseline",
+    N = nrow(subset_complete),
+    Events = sum(subset_complete$AD_Conversion),
+    auc_base,
+    stringsAsFactors = FALSE
+  ),
+  data.frame(
+    Stratum = "HABS_pTau217_Subset_Complete",
+    Analysis_Set = "Matched pTau217 subset complete",
+    N = nrow(subset_complete),
+    Events = sum(subset_complete$AD_Conversion),
+    auc_complete,
+    stringsAsFactors = FALSE
+  )
 )
 perf$AUPRC <- c(NA, pr_base$AUPRC, pr_complete$AUPRC)
-perf$Event_Rate <- c(mean(full_cohort$AD_Conversion), event_rate, event_rate)
+perf$Event_Rate <- perf$Events / perf$N
+perf$DeLong_P_Value <- c(NA, delong$p.value, delong$p.value)
 
 write.csv(perf, file.path(opt$output_dir, "step16_performance_summary.csv"), row.names = FALSE)
+write.csv(
+  perf %>% select(Stratum, Analysis_Set, N, Events, Event_Rate, AUC, CI_Lower, CI_Upper, AUPRC, DeLong_P_Value),
+  file.path(opt$output_dir, "step16_manuscript_summary.csv"),
+  row.names = FALSE
+)
 write.csv(subgroup_df, file.path(opt$output_dir, "step16_subgroup_summary.csv"), row.names = FALSE)
 write.csv(dca, file.path(opt$output_dir, "step16_decision_curve.csv"), row.names = FALSE)
 write.csv(data.frame(Metric = names(nri), Value = as.numeric(nri)), file.path(opt$output_dir, "step16_nri.csv"), row.names = FALSE)
