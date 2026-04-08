@@ -1,178 +1,237 @@
-"""
-
 import argparse
-import pandas as pd
-import numpy as np
-import warnings
 import os
+import warnings
+
+import numpy as np
+import pandas as pd
 
 warnings.filterwarnings("ignore")
 
 
 def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description='CSF Biomarker Preprocessing'
+    parser = argparse.ArgumentParser(description="CSF biomarker preprocessing")
+    parser.add_argument(
+        "--roche_file",
+        type=str,
+        default="./ADNI_Raw_Data/CSF/CSF_Roche_Elecsys.csv",
+        help="Path to Roche Elecsys CSF file",
     )
-    parser.add_argument('--roche_file', type=str,
-                        default='./ADNI_Raw_Data/CSF/CSF_Roche_Elecsys.csv',
-                        help='Path to Roche Elecsys CSF data')
-    parser.add_argument('--alzbio3_file', type=str,
-                        default='./ADNI_Raw_Data/CSF/CSF_Alzbio3.csv',
-                        help='Path to AlzBio3 CSF data')
-    parser.add_argument('--output_file', type=str,
-                        default='./processed_data/CSF_biomarkers_raw.csv',
-                        help='Output file path (raw values, no standardization)')
-    parser.add_argument('--output_dir', type=str,
-                        default='./processed_data',
-                        help='Output directory')
+    parser.add_argument(
+        "--alzbio3_file",
+        type=str,
+        default="./ADNI_Raw_Data/CSF/CSF_Alzbio3.csv",
+        help="Path to AlzBio3 CSF file",
+    )
+    parser.add_argument(
+        "--output_file",
+        type=str,
+        default="./processed_data/CSF_biomarkers_raw.csv",
+        help="Output file path",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="./processed_data",
+        help="Output directory",
+    )
     return parser.parse_args()
 
 
 def read_csv_robust(filepath):
-    """Read CSV with multiple encoding attempts."""
-    encodings = ['utf-8-sig', 'gbk', 'latin-1', 'utf-8']
+    encodings = ["utf_8_sig", "utf_8", "gbk", "latin_1"]
+    last_error = None
     for encoding in encodings:
         try:
             return pd.read_csv(filepath, encoding=encoding)
-        except Exception:
-            continue
-    raise ValueError(f"Could not read file: {filepath}")
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"Could not read file: {filepath}") from last_error
+
+
+def first_existing(columns, candidates):
+    lower_map = {col.lower(): col for col in columns}
+    for candidate in candidates:
+        if candidate.lower() in lower_map:
+            return lower_map[candidate.lower()]
+    return None
+
+
+def build_roche_table(roche_data):
+    rid_col = first_existing(roche_data.columns, ["RID"])
+    ptid_col = first_existing(roche_data.columns, ["PTID"])
+    abeta42_col = first_existing(roche_data.columns, ["ABETA42"])
+    abeta40_col = first_existing(roche_data.columns, ["ABETA40"])
+    tau_col = first_existing(roche_data.columns, ["TAU", "TAU_TOTAL"])
+    ptau_col = first_existing(roche_data.columns, ["PTAU", "PTAU181"])
+
+    if rid_col is None:
+        raise ValueError("RID column not found in Roche file")
+
+    roche = pd.DataFrame()
+    roche["RID"] = roche_data[rid_col].astype(str)
+
+    if ptid_col is not None:
+        roche["PTID"] = roche_data[ptid_col].astype(str)
+    else:
+        roche["PTID"] = np.nan
+
+    if abeta42_col is not None:
+        roche["ABETA42_ROCHE"] = pd.to_numeric(roche_data[abeta42_col], errors="coerce")
+    if abeta40_col is not None:
+        roche["ABETA40_ROCHE"] = pd.to_numeric(roche_data[abeta40_col], errors="coerce")
+    if tau_col is not None:
+        roche["TAU_TOTAL_ROCHE"] = pd.to_numeric(roche_data[tau_col], errors="coerce")
+    if ptau_col is not None:
+        roche["PTAU181_ROCHE"] = pd.to_numeric(roche_data[ptau_col], errors="coerce")
+
+    return roche
+
+
+def build_alzbio3_table(alzbio3_data):
+    rid_col = first_existing(alzbio3_data.columns, ["RID"])
+    abeta_col = first_existing(alzbio3_data.columns, ["ABETA", "ABETA42"])
+    tau_col = first_existing(alzbio3_data.columns, ["TAU", "TAU_TOTAL"])
+    ptau_col = first_existing(alzbio3_data.columns, ["PTAU", "PTAU181"])
+
+    if rid_col is None:
+        raise ValueError("RID column not found in AlzBio3 file")
+
+    alzbio3 = pd.DataFrame()
+    alzbio3["RID"] = alzbio3_data[rid_col].astype(str)
+
+    if abeta_col is not None:
+        alzbio3["ABETA42_ALZBIO3"] = pd.to_numeric(alzbio3_data[abeta_col], errors="coerce")
+    if tau_col is not None:
+        alzbio3["TAU_TOTAL_ALZBIO3"] = pd.to_numeric(alzbio3_data[tau_col], errors="coerce")
+    if ptau_col is not None:
+        alzbio3["PTAU181_ALZBIO3"] = pd.to_numeric(alzbio3_data[ptau_col], errors="coerce")
+
+    return alzbio3
+
+
+def coalesce_columns(frame, ordered_columns):
+    available = [col for col in ordered_columns if col in frame.columns]
+    if not available:
+        return pd.Series([np.nan] * len(frame), index=frame.index)
+    series = frame[available[0]].copy()
+    for col in available[1:]:
+        series = series.fillna(frame[col])
+    return series
 
 
 def harmonize_platforms(roche_data, alzbio3_data):
-    """
-    Harmonize CSF measurements across Roche Elecsys and AlzBio3 platforms.
-    
-    Args:
-        roche_data: DataFrame with Roche Elecsys measurements
-        alzbio3_data: DataFrame with AlzBio3 measurements
-    
-    Returns:
-        DataFrame with harmonized CSF biomarkers
-    """
-    # Extract core biomarkers from Roche platform
-    roche_cols = ['PTID', 'RID', 'ABETA40', 'ABETA42', 'TAU', 'PTAU', 'BATCH']
-    roche_available = [c for c in roche_cols if c in roche_data.columns]
-    roche_core = roche_data[roche_available].copy()
-    
-    # Calculate Aβ42/Aβ40 ratio (primary amyloid marker per
-    if 'ABETA42' in roche_core.columns and 'ABETA40' in roche_core.columns:
-        roche_core['ABETA42_ABETA40_RATIO'] = roche_core['ABETA42'] / roche_core['ABETA40']
-    
-    # Rename columns for consistency
-    rename_map = {'TAU': 'TAU_TOTAL', 'PTAU': 'PTAU181'}
-    roche_core.rename(columns=rename_map, inplace=True)
-    
-    # Extract core biomarkers from AlzBio3 platform
-    alzbio3_cols = ['RID', 'ABETA', 'TAU', 'PTAU', 'BATCH']
-    alzbio3_available = [c for c in alzbio3_cols if c in alzbio3_data.columns]
-    alzbio3_core = alzbio3_data[alzbio3_available].copy()
-    
-    alzbio3_rename = {'ABETA': 'ABETA42', 'TAU': 'TAU_TOTAL', 'PTAU': 'PTAU181'}
-    alzbio3_core.rename(columns=alzbio3_rename, inplace=True)
-    
-    # Merge platforms using outer join
-    csf_merged = pd.merge(roche_core, alzbio3_core, on='RID', how='outer', 
-                          suffixes=('_ROCHE', '_ALZBIO3'))
-    
-    # Harmonize measurements: prefer Roche, fill with AlzBio3
-    for biomarker in ['TAU_TOTAL', 'PTAU181']:
-        roche_col = f'{biomarker}_ROCHE'
-        alzbio_col = f'{biomarker}_ALZBIO3'
-        
-        if roche_col in csf_merged.columns and alzbio_col in csf_merged.columns:
-            csf_merged[biomarker] = csf_merged[roche_col].fillna(csf_merged[alzbio_col])
-        elif roche_col in csf_merged.columns:
-            csf_merged[biomarker] = csf_merged[roche_col]
-        elif alzbio_col in csf_merged.columns:
-            csf_merged[biomarker] = csf_merged[alzbio_col]
-    
-    return csf_merged
+    roche = build_roche_table(roche_data)
+    alzbio3 = build_alzbio3_table(alzbio3_data)
+
+    merged = pd.merge(roche, alzbio3, on="RID", how="outer")
+
+    merged["PTID"] = coalesce_columns(merged, ["PTID"])
+    merged["ABETA42"] = coalesce_columns(merged, ["ABETA42_ROCHE", "ABETA42_ALZBIO3"])
+    merged["ABETA40"] = coalesce_columns(merged, ["ABETA40_ROCHE"])
+    merged["TAU_TOTAL"] = coalesce_columns(merged, ["TAU_TOTAL_ROCHE", "TAU_TOTAL_ALZBIO3"])
+    merged["PTAU181"] = coalesce_columns(merged, ["PTAU181_ROCHE", "PTAU181_ALZBIO3"])
+
+    merged["ABETA42_ABETA40_RATIO"] = np.where(
+        merged["ABETA42"].notna() & merged["ABETA40"].notna() & (merged["ABETA40"] != 0),
+        merged["ABETA42"] / merged["ABETA40"],
+        np.nan,
+    )
+
+    merged["ID"] = merged["PTID"].fillna(merged["RID"]).astype(str)
+
+    keep_cols = [
+        "ID",
+        "RID",
+        "PTID",
+        "ABETA42",
+        "ABETA40",
+        "ABETA42_ABETA40_RATIO",
+        "TAU_TOTAL",
+        "PTAU181",
+    ]
+    out = merged[keep_cols].copy()
+    out = out.replace([np.inf, -np.inf], np.nan)
+    out = out.drop_duplicates(subset=["ID"])
+
+    return out
+
+
+def report_missingness(df, variables):
+    print("\nMissingness report")
+    for variable in variables:
+        if variable not in df.columns:
+            continue
+        n_missing = int(df[variable].isna().sum())
+        pct_missing = 100 * n_missing / len(df)
+        print(f"  {variable}: {n_missing} missing values ({pct_missing:.1f} percent)")
+
+
+def report_summary(df, variables):
+    print("\nRaw value summary")
+    for variable in variables:
+        if variable not in df.columns:
+            continue
+        values = pd.to_numeric(df[variable], errors="coerce").dropna()
+        if values.empty:
+            print(f"  {variable}: no observed values")
+            continue
+        q1 = values.quantile(0.25)
+        q3 = values.quantile(0.75)
+        print(
+            f"  {variable}: median={values.median():.4f}, "
+            f"IQR=({q1:.4f}, {q3:.4f}), n={len(values)}"
+        )
 
 
 def preprocess_csf(roche_file, alzbio3_file, output_file, output_dir):
-    """
-    Main preprocessing function for CSF biomarker data.
-    Args:
-        roche_file: Path to Roche Elecsys CSV
-        alzbio3_file: Path to AlzBio3 CSV
-        output_file: Output file path
-        output_dir: Output directory
-    """
     print("=" * 70)
-    print("Step 2: CSF Biomarker Preprocessing 
-    print("CORRECTED: No premature standardization (deferred to Step 7)")
+    print("Step 2: CSF biomarker preprocessing")
+    print("Raw values are preserved")
+    print("Standardization is deferred to later analysis steps")
     print("=" * 70)
-    
-    # Create output directory
+
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Load data
-    print(f"\n[1/4] Loading CSF data...")
-    roche = read_csv_robust(roche_file)
-    alzbio3 = read_csv_robust(alzbio3_file)
-    print(f"  Roche Elecsys: {len(roche)} records")
-    print(f"  AlzBio3: {len(alzbio3)} records")
-    
-    # Harmonize platforms
-    print("\n[2/4] Harmonizing platforms 
-    csf_merged = harmonize_platforms(roche, alzbio3)
-    print(f"  Merged records: {len(csf_merged)}")
-    
-    # Select final features ( Aβ42/Aβ40 ratio, p-tau181, total tau)
-    print("\n[3/4] Selecting CSF biomarkers...")
-    feature_cols = ['PTAU181', 'ABETA42_ABETA40_RATIO', 'TAU_TOTAL']
-    
-    # Ensure ID column exists
-    id_col = 'PTID' if 'PTID' in csf_merged.columns else 'RID'
-    csf_final = csf_merged[[id_col] + [c for c in feature_cols if c in csf_merged.columns]].copy()
-    csf_final.rename(columns={id_col: 'ID'}, inplace=True)
-    
-    # Handle infinite values only (keep NaN for later MICE imputation)
-    print("\n[4/4] Handling infinite values (keeping NaN for MICE in Step 7)...")
-    csf_final = csf_final.replace([np.inf, -np.inf], np.nan)
-    
-    available_features = [c for c in feature_cols if c in csf_final.columns]
-    
-    # Report missing values (will be handled by MICE in Step 7)
-    for feat in available_features:
-        n_missing = csf_final[feat].isnull().sum()
-        pct_missing = 100 * n_missing / len(csf_final)
-        print(f"  {feat}: {n_missing} missing ({pct_missing:.1f}%) - will be imputed in Step 7")
-    
-    # Summary statistics (RAW values)
-    print("\n  CSF Biomarker Summary (RAW values, before standardization):")
-    for feat in available_features:
-        valid_data = csf_final[feat].dropna()
-        print(f"    {feat}: median={valid_data.median():.2f}, IQR=[{valid_data.quantile(0.25):.2f}, {valid_data.quantile(0.75):.2f}]")
-    
-    # Save output (RAW values)
-    output_path = output_file if os.path.isabs(output_file) else os.path.join(
-        output_dir, os.path.basename(output_file)
+
+    print("\n[1/4] Loading files")
+    roche_data = read_csv_robust(roche_file)
+    alzbio3_data = read_csv_robust(alzbio3_file)
+    print(f"  Roche records: {len(roche_data)}")
+    print(f"  AlzBio3 records: {len(alzbio3_data)}")
+
+    print("\n[2/4] Harmonizing platforms")
+    csf_final = harmonize_platforms(roche_data, alzbio3_data)
+    print(f"  Subjects after merge: {len(csf_final)}")
+
+    print("\n[3/4] Reporting missingness and raw summaries")
+    report_missingness(
+        csf_final,
+        ["ABETA42", "ABETA40", "ABETA42_ABETA40_RATIO", "TAU_TOTAL", "PTAU181"],
     )
+    report_summary(
+        csf_final,
+        ["ABETA42", "ABETA40", "ABETA42_ABETA40_RATIO", "TAU_TOTAL", "PTAU181"],
+    )
+
+    print("\n[4/4] Writing output")
+    output_path = output_file
+    if not os.path.isabs(output_file):
+        output_path = os.path.join(output_dir, os.path.basename(output_file))
     csf_final.to_csv(output_path, index=False)
-    print(f"\n  Saved: {output_path}")
-    print(f"  Total subjects: {len(csf_final)}")
-    
-    print("\n" + "=" * 70)
-    print("Step 2: CSF Preprocessing Complete")
-    print("=" * 70)
-    
+    print(f"  Saved file: {output_path}")
+
+    print("\nCompleted step 2")
     return csf_final
 
 
 def main():
-    """Main entry point."""
     args = parse_args()
     preprocess_csf(
         roche_file=args.roche_file,
         alzbio3_file=args.alzbio3_file,
         output_file=args.output_file,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
     )
 
 
 if __name__ == "__main__":
     main()
-
