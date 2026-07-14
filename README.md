@@ -1,751 +1,448 @@
+[README.md](https://github.com/user-attachments/files/29989673/README.md)
 # AD Multimodal Study
 
-This repository contains the manuscript-aligned analysis code for multimodal Alzheimer's disease risk stratification, independent AI-versus-neurologist benchmarking, human-AI second-reader workflow evaluation, reduced-feature external validation, external cohort framework-extension analyses, no-VAE sensitivity testing, and longitudinal holdout outcome sensitivity analysis.
+Code supporting the manuscript:
 
-The repository does not contain participant-level data. ADNI, A4, AIBL, HABS, Fox Lab BSI outputs, and expert-reader data must be obtained from the original study repositories under their data-use agreements.
+**Five-Neurologist Evaluation of Cross-Fitted Multimodal Artificial Intelligence for Three-Year Progression From Mild Cognitive Impairment to Alzheimer Disease**
 
-## Manuscript Title
+This repository contains data-preparation scripts, variational autoencoder analyses, supervised prediction models, a five-neurologist reader benchmark, Rule C decision analyses, longitudinal outcome analyses, and external cohort contextualization. Participant-level source data and expert ratings are not distributed because they are governed by study-specific data-use agreements.
 
-Multimodal AI Risk Stratification of MCI-to-Alzheimer's Disease Progression in Aging Cohorts
+## Study objective
 
-## Scientific Scope
+The study evaluates three-year progression from mild cognitive impairment to Alzheimer disease and examines whether multimodal model estimates can support neurologist classification when reader probabilities fall within a prespecified uncertainty interval.
 
-The current manuscript-facing workflow has seven linked aims:
+Five neurologists provided conversion probabilities before and after structured magnetic resonance imaging review. Rule C substitutes the model probability only when the Stage 2 neurologist probability is between 40% and 60%. The model threshold and Rule C interval are specified in the analysis code.
 
-1. Build harmonized multimodal ADNI discovery inputs from clinical, CSF, APOE, and structural MRI data.
-2. Derive and characterize VAE-based latent structural profiles as discovery-stage heterogeneity layers.
-3. Train a frozen multimodal AI risk model and benchmark it against masked neurologist assessments in an independent ADNI holdout cohort.
-4. Evaluate a prespecified human-AI Rule C workflow in which the AI model acts as a specificity-oriented second reader for expert gray-zone cases.
-5. Validate transportability of a reduced-feature ADNI-trained clinical model in AIBL when complete multimodal feature equivalence is not available.
-6. Use A4 and HABS as framework-extension analyses rather than co-primary validation cohorts for the full multimodal model.
-7. Add no-VAE and longitudinal holdout outcome sensitivity analyses to test whether Rule C is driven solely by VAE latent variables and whether baseline risk labels relate to later cognitive, functional, and structural trajectories.
+The evidence structure includes:
 
-The final manuscript interpretation is hierarchical:
+1. Multimodal characterization in the Alzheimer Disease Neuroimaging Initiative discovery cohort.
+2. Cross-fitted model predictions for reader-study participants who overlap the discovery cohort.
+3. Frozen model predictions for reader-study participants without discovery overlap.
+4. A participant-independent Alzheimer Disease Neuroimaging Initiative validation cohort with 318 participants and no discovery identifiers.
+5. A clinical-proxy validation in the Australian Imaging, Biomarker and Lifestyle cohort.
+6. Exploratory analyses in the Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease and Harvard Aging Brain Study cohorts.
+7. Longitudinal boundary shift integral and cognitive outcome sensitivity analyses.
 
-1. Primary clinical utility evidence: independent ADNI holdout AI-versus-neurologist benchmark plus prespecified Rule C gray-zone second-reader workflow.
-2. Secondary external validation: AIBL reduced-feature validation of an ADNI-trained clinical model using harmonizable variables.
-3. Framework-extension evidence: A4 preclinical/trial-screening transportability and HABS cohort-specific biomarker-enriched adaptability.
-4. Supporting structural context: VAE latent profiles and BSI longitudinal atrophy analyses.
-5. Robustness and trajectory context: no-VAE Rule C sensitivity and longitudinal holdout outcome sensitivity.
+## Main analysis set
 
-The AIBL reduced-feature analysis externally validates a prespecified clinical model. It is not direct external validation of the full multimodal MRI/CSF/VAE AI pipeline because same-pipeline multimodal feature equivalence was not available in AIBL at the time of the analysis.
+The strict endpoint defines conversion as an Alzheimer disease diagnosis within 36 calendar months of the mild cognitive impairment baseline. A participant classified as a non-event must have diagnostic follow-up extending to at least 36 months. Participants without an event and without sufficient follow-up are excluded from strict-endpoint analyses.
 
-## Repository Layout
+The five-reader benchmark contains 153 participants, 77 events, 76 non-events, five neurologists, and 765 case-reader pairs. Outcome-excluded predictions are used for every participant. Cross-fitting supplies predictions for the 124 participants who overlap the discovery cohort. A model fitted in the strict development cohort supplies frozen predictions for the 29 nonoverlapping reader-study participants.
+
+The participant-independent Alzheimer Disease Neuroimaging Initiative benchmark contains 318 participants, including 104 events. The clinical plus magnetic resonance imaging model achieved an area under the receiver operating characteristic curve of 0.752, with a 95% confidence interval from 0.695 to 0.810. The complete clinical, cerebrospinal fluid, and magnetic resonance imaging model achieved an area under the curve of 0.720; cerebrospinal fluid measurements were available for 29 participants, so this estimate requires cautious interpretation.
+
+The Australian Imaging, Biomarker and Lifestyle clinical-proxy analysis contains 34 participants and 16 events. The age, sex, Mini-Mental State Examination, and apolipoprotein E epsilon 4 model achieved an area under the curve of 0.759, with a 95% confidence interval from 0.597 to 0.908. This analysis evaluates transportability of a clinical proxy and does not constitute complete external validation of the magnetic resonance imaging and cerebrospinal fluid model.
+
+Reference values used to check generated aggregate results are stored in `analysis_pipeline/REFERENCE_RESULTS.json`.
+
+## Repository structure
 
 ```text
 AD_Multimodal_Study/
 |-- 0_shared_input_preparation/
-|   |-- Cohort Integration.py
-|   |-- Create_outcome.py
-|   |-- Preprocess_APOE.py
-|   |-- Preprocess_Clinical.py
-|   |-- Preprocess_CSF.py
-|   `-- Preprocess_sMRI.py
 |-- 1_discovery_subtype_model/
-|   `-- vae_clustering.py
 |-- 2_discovery_characterization/
-|   |-- ADNI_discovery.R
-|   |-- Biomarker_validation.py
-|   |-- Cluster_signatures.R
-|   |-- Cluster_validation.R
-|   |-- Conversion_differential.R
-|   |-- Cross_modal_validation.R
-|   |-- Neuroimaging_endotypes.R
-|   `-- Predictive_modeling.R
 |-- 3_AI_vs_Clinician_Analysis/
-|   |-- Prepare Test.R
-|   |-- AI Prediction.py
-|   |-- Expert Assessment Workflow.R
-|   |-- AI vs Expert Comparison Analysis.R
-|   |-- Human_AI_RuleC_Workflow_Extension.R
-|   |-- Human_AI_RuleC_Posthoc_Refinements.R
-|   |-- AI_Prediction_NoVAE.py
-|   `-- Human_AI_RuleC_Longitudinal_Sensitivity.R
 |-- 4_external_contextualization/
-|   |-- Cross_cohort_analysis.py
-|   |-- A4_validation.R
-|   |-- AIBL _Validation.R
-|   |-- AIBL_Feasibility_Gate.R
-|   |-- AIBL_Reduced_Feature_External_Validation.R
-|   |-- HABS_validation.R
-|   `-- SHAP_analysis.R
 |-- 5_final_evidence_synthesis/
-|   `-- Evidence_synthesis.R
-|-- requirements.txt
+|-- analysis_pipeline/
+|   |-- 01_define_36m_endpoints.py
+|   |-- 02_rulec_statistics_core.py
+|   |-- 03_extract_aligned_features.py
+|   |-- 04_fit_leakage_controlled_models.py
+|   |-- 05_validate_aibl_clinical_proxy.py
+|   |-- 06_vae_sensitivity_analysis.py
+|   |-- 07_build_nonoverlap_adni_validation.py
+|   |-- 08_crossfit_five_reader_benchmark.py
+|   |-- 09_multireader_statistics.py
+|   |-- 10_generate_figures.py
+|   |-- run_analysis_pipeline.py
+|   |-- REFERENCE_RESULTS.json
+|   |-- OUTPUT_SCHEMA.md
+|   `-- .env.example
+|-- CITATION.cff
 |-- LICENSE
+|-- requirements.txt
 `-- README.md
 ```
 
-## Data Access
+### Module descriptions
 
-This repository does not redistribute restricted participant-level data.
+`0_shared_input_preparation` contains preprocessing for clinical variables, apolipoprotein E genotype, cerebrospinal fluid biomarkers, structural magnetic resonance imaging, outcome construction, and cohort integration.
 
-Users must obtain access directly from:
+`1_discovery_subtype_model` contains variational autoencoder training, latent representation extraction, and clustering.
 
-- Alzheimer's Disease Neuroimaging Initiative (ADNI)
-- Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease (A4) Study
-- Australian Imaging, Biomarker and Lifestyle Flagship Study (AIBL)
-- Harvard Aging Brain Study (HABS)
-- Fox Lab longitudinal BSI-derived imaging outputs, where applicable
+`2_discovery_characterization` contains subtype characterization, biomarker analyses, conversion comparisons, predictive modeling, neuroimaging endotypes, and longitudinal boundary shift integral analyses.
 
-The code is licensed separately from the cohort datasets. No data-use rights are conveyed by the repository license.
+`3_AI_vs_Clinician_Analysis` contains the five-neurologist assessment workflow, artificial intelligence predictions, Rule C analyses, no-latent-variable analyses, post hoc analyses, and longitudinal outcome sensitivity analyses.
 
-## Expected Local Data Organization
+`4_external_contextualization` contains Australian Imaging, Biomarker and Lifestyle feasibility and clinical-proxy analyses, Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease analyses, Harvard Aging Brain Study analyses, cross-cohort projections, and feature-attribution analyses.
 
-Several scripts use command-line arguments, so local data paths can be customized. The examples assume a project-level data root with folders such as:
+`5_final_evidence_synthesis` contains evidence-summary code for combining outputs from the component analyses.
+
+`analysis_pipeline` contains the ordered workflow for the strict 36-month endpoint, leakage-controlled supervised models, five-reader benchmark, participant-independent validation, clinical-proxy validation, VAE sensitivity analyses, and manuscript figures.
+
+## Data access
+
+Source data must be obtained from the organizations that govern each cohort. Users are responsible for completing the corresponding applications and complying with all data-use terms.
+
+The analyses use data from:
+
+1. Alzheimer's Disease Neuroimaging Initiative.
+2. Australian Imaging, Biomarker and Lifestyle study.
+3. Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease study.
+4. Harvard Aging Brain Study.
+5. Fox Lab longitudinal boundary shift integral outputs.
+6. Five neurologist assessments collected for this study.
+
+No participant-level data, protected health information, imaging files, or individual neurologist ratings should be committed to this repository.
+
+## Data directory
+
+The integrated pipeline expects the following English-language directory structure beneath the path supplied with `--data-root`:
 
 ```text
-<data_root>/
+ad_multimodal_data/
 |-- ADNI_Raw_Data/
-|-- ADNI_original_data/
-|-- Phase1_ADNI_Discovery/
-|-- AI_vs_Clinician_Test/
-|-- aibl_19Sep2019/
-|   `-- Data_extract_3.3.0/
-|-- AIBL_validation/
-|-- step11_results/
-|-- step12_results/
-|-- step14_results/
-|-- step16_results/
-|-- step18_results/
-|-- step20_results/
-|-- step21_results/
-|-- step22_results/
-|-- longitudinal_bsi_validation/
-|-- PET_cohort_analysis/
-`-- vae_revised_output/
+|   |-- LINES/
+|   |   |-- Diagnostic Summary.csv
+|   |   |-- Subject Demographics.csv
+|   |   `-- Mini-Mental State Examination (MMSE).csv
+|   |-- APOE/
+|   |   `-- ApoE Genotyping - Results.csv
+|   |-- CSF/
+|   |   |-- UPENN CSF Biomarker Master Alzbio3.csv
+|   |   `-- UPENN CSF Biomarkers Roche Elecsys.csv
+|   `-- sMRI/
+|       `-- UCSF - Cross-Sectional FreeSurfer (7.x).csv
+|-- Analysis_Inputs/
+|   |-- AI_vs_Clinician_Test/
+|   |   |-- independent_test_set.csv
+|   |   |-- AI_per_patient_predictions.csv
+|   |   `-- Expert_Predictions_Long.csv
+|   |-- AIBL_Feasibility_Gate/
+|   |   `-- 02_aibl_eligible_mci_to_ad_conversion_cohort.csv
+|   `-- VAE_Output/
+|       `-- subtype_assignments.csv
+`-- Derived_Inputs/
+    `-- Discovery_CSF_Cohort/
+        |-- Womac_score_pain_function.csv
+        |-- Clinical_data.csv
+        |-- RNA_plasma.csv
+        `-- metabolites.csv
 ```
 
-If your data are stored elsewhere, pass explicit paths through script arguments.
+The public code contains no machine-specific absolute data path. `AD_MULTIMODAL_DATA_ROOT` may be set directly, or the same path may be supplied with `--data-root`.
 
-## Software Environment
+## Software requirements
 
-### Python
+Recommended environment:
 
-Recommended Python version: 3.10 or later.
+- Python 3.10 or later.
+- R 4.2 or later.
+- At least 16 GB of memory for the complete workflow.
 
-Install dependencies:
+Install Python dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m venv .venv
 ```
 
-Python packages used across the workflow include:
+Windows PowerShell:
 
-- numpy
-- pandas
-- scipy
-- scikit-learn
-- matplotlib
-- seaborn
-- torch
-- tensorflow
-- keras
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-### R
+Linux or macOS:
 
-Recommended R version: 4.2 or later.
+```bash
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-Install CRAN dependencies:
+Principal Python packages include NumPy, pandas, SciPy, scikit-learn, statsmodels, TensorFlow, Keras, matplotlib, seaborn, and joblib.
+
+Install the R packages required by the component scripts:
 
 ```r
 install.packages(c(
-  "optparse", "dplyr", "tidyr", "ggplot2", "jsonlite", "stringr",
-  "randomForest", "pROC", "caret", "mice", "glmnet", "xgboost",
-  "corrplot", "ResourceSelection", "ggrepel", "pheatmap", "RColorBrewer",
-  "data.table", "survival", "survminer", "lme4", "lmerTest", "emmeans",
-  "cluster", "mclust", "logistf", "PRROC", "tidyverse", "readr",
-  "readxl", "writexl", "patchwork", "multcomp", "broom", "purrr",
-  "tibble", "scales", "irr", "gridExtra", "lubridate"
+  "optparse", "readr", "dplyr", "tidyr", "purrr", "stringr",
+  "ggplot2", "patchwork", "broom", "car", "emmeans", "lme4",
+  "lmerTest", "survival", "survminer", "pROC", "mice", "caret",
+  "glmnet", "randomForest", "ranger", "cluster", "factoextra"
 ))
 ```
 
-Install Bioconductor dependencies:
+Package requirements for an individual R analysis are also declared near the beginning of the corresponding script.
 
-```r
-if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
-BiocManager::install(c("ConsensusClusterPlus", "limma"))
-```
+## Run the integrated pipeline
 
-Some scripts attempt to install missing packages automatically. For reproducible manuscript reruns, pre-installing dependencies is recommended.
-
-## Workflow Overview
-
-The workflow is modular. Run only the branches needed for the analysis you want to reproduce.
-
-## 0. Shared Input Preparation
-
-These scripts harmonize raw cohort inputs into analysis-ready tables.
+Run all ten steps from the repository root:
 
 ```bash
-python 0_shared_input_preparation/Preprocess_APOE.py \
-  --input_file ./ADNI_Raw_Data/APOE/ApoE_Genotyping_Results.csv \
-  --output_file ./processed_data/APOE_genetics.csv \
-  --output_dir ./processed_data
-
-python 0_shared_input_preparation/Preprocess_CSF.py
-python 0_shared_input_preparation/Preprocess_Clinical.py
-python 0_shared_input_preparation/Preprocess_sMRI.py
-python 0_shared_input_preparation/Create_outcome.py
-python "0_shared_input_preparation/Cohort Integration.py"
+python analysis_pipeline/run_analysis_pipeline.py \
+  --data-root "/absolute/path/to/ad_multimodal_data" \
+  --output-dir "analysis_pipeline/outputs" \
+  --figure-dir "analysis_pipeline/submission_figures"
 ```
 
-Expected outputs include harmonized APOE, CSF, clinical, structural MRI, outcome, and integrated multimodal feature tables.
+Windows example:
 
-## 1. Discovery Latent Subtype Model
+```powershell
+python analysis_pipeline\run_analysis_pipeline.py `
+  --data-root "C:\data\ad_multimodal_data" `
+  --output-dir "analysis_pipeline\outputs" `
+  --figure-dir "analysis_pipeline\submission_figures"
+```
 
-The VAE discovery model learns latent multimodal representations in the ADNI discovery cohort.
+Run a selected interval with `--start-step` and `--stop-step`:
 
 ```bash
-python 1_discovery_subtype_model/vae_clustering.py
+python analysis_pipeline/run_analysis_pipeline.py \
+  --data-root "/absolute/path/to/ad_multimodal_data" \
+  --start-step 8 \
+  --stop-step 10
 ```
 
-Representative outputs include:
+The selected interval assumes that required outputs from preceding steps already exist in `--output-dir`.
 
-- latent representations
-- VAE reconstruction summaries
-- subtype assignments
-- subtype centroids
-- model configuration artifacts
+## Pipeline steps
 
-The primary VAE input includes 37 variables:
+### Step 1: Define 36-month endpoints
 
-- 3 CSF biomarkers
-- 4 clinical/genetic variables
-- 30 structural MRI variables
+Script: `analysis_pipeline/01_define_36m_endpoints.py`
 
-FAQ, ADAS13, and CDR-SB are excluded from AI training to reduce circularity with the conversion endpoint. Age and sex are excluded from VAE input and used for downstream adjustment.
+This step identifies the mild cognitive impairment baseline, calculates time from baseline to Alzheimer disease diagnosis, applies the strict 36-month endpoint, and constructs a visit-window sensitivity endpoint for the Alzheimer Disease Neuroimaging Initiative and Australian Imaging, Biomarker and Lifestyle cohorts.
 
-## 2. Discovery Characterization and Prediction
+Principal outputs:
 
-Discovery-stage scripts characterize latent subgroups biologically, clinically, structurally, and longitudinally.
+- `adni_discovery_endpoints.csv`
+- `adni_holdout_endpoints.csv`
+- `aibl_endpoints.csv`
+- `endpoint_summary.json`
+
+### Step 2: Construct Rule C analysis tables
+
+Script: `analysis_pipeline/02_rulec_statistics_core.py`
+
+This step aligns strict outcomes, model probabilities, and five-neurologist ratings. It evaluates the prespecified 40% to 60% uncertainty interval, calculates discrimination, Brier score, calibration, sensitivity, specificity, paired classification changes, reader-specific performance, and bootstrap confidence intervals.
+
+Principal outputs:
+
+- `holdout_reader_master.csv`
+- `rulec_scenario_performance.csv`
+- `rulec_scenario_bootstrap_cis.csv`
+- `rulec_paired_changes.csv`
+- `rulec_reclassification_tables.csv`
+- `rulec_per_reader_performance.csv`
+- `expert_ai_reference_correlations.csv`
+- `holdout_reader_summary.json`
+
+### Step 3: Extract aligned baseline features
+
+Script: `analysis_pipeline/03_extract_aligned_features.py`
+
+This step extracts baseline clinical, apolipoprotein E, cerebrospinal fluid, and FreeSurfer variables from source tables. It aligns raw features to the endpoint cohorts without using outcome information during feature preprocessing.
+
+Principal outputs:
+
+- `raw_extraction_validation_against_test_file.csv`
+- `adni_discovery_raw_aligned_features.csv`
+- `adni_holdout_raw_aligned_features.csv`
+
+### Step 4: Fit leakage-controlled supervised models
+
+Script: `analysis_pipeline/04_fit_leakage_controlled_models.py`
+
+This step fits elastic-net logistic models within pipelines containing median imputation, missingness indicators, and standardization. Hyperparameters are selected within inner folds. Out-of-fold predictions and thresholds are generated without access to the corresponding test outcomes.
+
+Candidate feature sets include clinical variables, clinical plus magnetic resonance imaging variables, and the complete clinical plus cerebrospinal fluid plus magnetic resonance imaging panel.
+
+Principal outputs:
+
+- `leakage_free_model_performance.csv`
+- `independent41_new_model_predictions.csv`
+- `nested_tuning_*.csv`
+- `final_coefficients_*.csv`
+
+### Step 5: Evaluate the AIBL clinical proxy
+
+Script: `analysis_pipeline/05_validate_aibl_clinical_proxy.py`
+
+This step fits the age, sex, Mini-Mental State Examination, and apolipoprotein E epsilon 4 model in the Alzheimer Disease Neuroimaging Initiative development data and evaluates frozen predictions in eligible Australian Imaging, Biomarker and Lifestyle participants.
+
+Principal outputs:
+
+- `aibl_harmonized_predictions.csv`
+- `aibl_harmonized_nested_tuning.csv`
+- `aibl_harmonized_performance.csv`
+
+### Step 6: Evaluate VAE sensitivity analyses
+
+Script: `analysis_pipeline/06_vae_sensitivity_analysis.py`
+
+This step evaluates subtype-associated magnetic resonance imaging variation with Type II analysis of covariance, strict 36-month conversion associations, demographic and education-related separation, and soluble triggering receptor expressed on myeloid cells 2 comparisons.
+
+Principal outputs:
+
+- `type2_ancova_mri_subtype.csv`
+- `vae_subtype_conversion_rates_original_vs_strict36.csv`
+- `vae_strict36_conversion_association.csv`
+- `vae_demographic_confounding_tests.csv`
+- `strem2_subtype_descriptive.csv`
+- `strem2_pairwise_tests.csv`
+- `vae_statistics_summary.json`
+
+### Step 7: Build the nonoverlapping ADNI validation cohort
+
+Script: `analysis_pipeline/07_build_nonoverlap_adni_validation.py`
+
+This step identifies Alzheimer Disease Neuroimaging Initiative participants with a mild cognitive impairment baseline who do not share a discovery identifier, applies the strict endpoint, extracts the required features, and evaluates frozen supervised models.
+
+Principal outputs:
+
+- `new_nonoverlapping_adni_benchmark_predictions.csv`
+- `new_nonoverlapping_adni_benchmark_performance.csv`
+- `new_nonoverlapping_adni_benchmark_subgroups.csv`
+
+### Step 8: Generate cross-fitted reader-study predictions
+
+Script: `analysis_pipeline/08_crossfit_five_reader_benchmark.py`
+
+For reader-study participants who overlap the discovery cohort, this step produces outer-fold predictions from models that exclude the participant during fitting, tuning, and threshold selection. Frozen development-cohort models supply predictions for reader-study participants without discovery overlap.
+
+Principal outputs:
+
+- `crossfitted_expert_benchmark.csv`
+- `crossfitted_expert_summary.csv`
+- `crossfitted_expert_performance.csv`
+- `crossfitted_expert_ci.csv`
+- `crossfitted_expert_per_reader.csv`
+- `crossfitted_expert_paired.csv`
+- `crossfitted_expert_reclassification.csv`
+- `crossfitted_expert_folds.csv`
+
+### Step 9: Estimate multi-reader statistics
+
+Script: `analysis_pipeline/09_multireader_statistics.py`
+
+This step calculates reader-macro performance, pooled performance, participant-cluster bootstrap confidence intervals, exact McNemar tests, reclassification tables, categorical net reclassification improvement, decision-curve estimates, intraclass correlation coefficients, and Fleiss kappa.
+
+Principal outputs:
+
+- `final_multireader_macro_performance.csv`
+- `final_multireader_macro_differences.csv`
+- `final_expert_reliability_strict153.csv`
+- `final_pooled_reader_performance.csv`
+- `final_pooled_reader_bootstrap_cis.csv`
+- `final_pooled_rulec_paired_changes.csv`
+- `final_pooled_rulec_reclassification.csv`
+- `final_pooled_rulec_categorical_nri.csv`
+- `final_pooled_rulec_exact_mcnemar.csv`
+- `final_pooled_rulec_dca.csv`
+- `final_multireader_summary.json`
+
+### Step 10: Generate figures
+
+Script: `analysis_pipeline/10_generate_figures.py`
+
+This step generates the main and supplementary statistical figures directly from pipeline outputs. Each figure is written in 600-dpi PNG and vector PDF format.
+
+Output directories:
+
+- `analysis_pipeline/submission_figures/main`
+- `analysis_pipeline/submission_figures/supplementary`
+
+## Variational autoencoder analysis
+
+The variational autoencoder is fitted in the discovery cohort to characterize multimodal baseline variation. It is separate from the supervised Rule C model.
+
+Example command:
 
 ```bash
-Rscript 2_discovery_characterization/ADNI_discovery.R \
-  --subtype_file subtype_assignments.csv \
-  --clinical_file Clinical_data.csv \
-  --output_dir ./step19_results
-
-Rscript 2_discovery_characterization/Cluster_validation.R
-Rscript 2_discovery_characterization/Cluster_signatures.R
-Rscript 2_discovery_characterization/Conversion_differential.R
-Rscript 2_discovery_characterization/Cross_modal_validation.R
-Rscript 2_discovery_characterization/Neuroimaging_endotypes.R
-Rscript 2_discovery_characterization/Predictive_modeling.R
-python 2_discovery_characterization/Biomarker_validation.py
+python 1_discovery_subtype_model/vae_clustering.py \
+  --input_dir "/absolute/path/to/discovery_inputs" \
+  --output_dir "/absolute/path/to/VAE_Output" \
+  --cohort A \
+  --n_clusters 3 \
+  --latent_dim 3 \
+  --epochs 300 \
+  --batch_size 32
 ```
 
-These analyses support discovery-stage heterogeneity, conversion gradients, stability testing, MRI/network characterization, biomarker context, and discovery predictive modeling.
-
-## 3. Independent ADNI Holdout AI-Versus-Clinician Benchmark
-
-This branch builds the independent holdout test set, generates frozen AI predictions, collects or formats expert predictions, and compares AI performance with expert readers.
-
-```bash
-Rscript "3_AI_vs_Clinician_Analysis/Prepare Test.R"
-python "3_AI_vs_Clinician_Analysis/AI Prediction.py"
-Rscript "3_AI_vs_Clinician_Analysis/Expert Assessment Workflow.R"
-Rscript "3_AI_vs_Clinician_Analysis/AI vs Expert Comparison Analysis.R"
-```
-
-Expected files for the human-AI workflow extension include:
-
-```text
-AI_vs_Clinician_Test/independent_test_set.csv
-AI_vs_Clinician_Test/AI_Predictions_Final.csv
-AI_vs_Clinician_Test/AI_per_patient_predictions.csv
-AI_vs_Clinician_Test/Expert_Predictions_Long.csv
-```
-
-`AI Prediction.py` writes both `AI_Predictions_Final.csv` and `AI_per_patient_predictions.csv` for backward compatibility.
-
-## 3A. Human-AI Rule C Workflow Extension
-
-`Human_AI_RuleC_Workflow_Extension.R` implements the primary manuscript-facing human-AI extension analysis:
-
-- expert Stage 2 gray-zone distribution check
-- no-refitting AI-expert probability integration
-- prespecified Rule A, Rule B, and Rule C workflow simulations
-- primary Rule C gray-zone second-reader analysis
-- case-level AI/expert discordance groups
-- AUC, DeLong tests, confusion matrices, PPV/NPV, and accuracy metrics
-- categorical NRI and IDI
-- decision-curve net benefit and resource translation
-- threshold sweep for descriptive operating points
-- optional BSI and VAE mechanism/context layers if linkable files are present
-
-Primary manuscript interpretation should focus on Rule C, not post-hoc fitted stacking.
-
-Run with default relative paths:
-
-```bash
-Rscript "3_AI_vs_Clinician_Analysis/Human_AI_RuleC_Workflow_Extension.R" \
-  --data_root . \
-  --output_dir ./3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension \
-  --ai_file ./AI_vs_Clinician_Test/AI_Predictions_Final.csv \
-  --expert_file ./AI_vs_Clinician_Test/Expert_Predictions_Long.csv \
-  --test_file ./AI_vs_Clinician_Test/independent_test_set.csv \
-  --n_bootstrap 2000 \
-  --cv_repeats 200
-```
-
-Main outputs include:
-
-```text
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/
-|-- 00_case_level_master.csv
-|-- 00_case_level_master_with_combined_predictions.csv
-|-- 00_gray_zone_distribution_check.csv
-|-- 01_performance_summary_primary_thresholds.csv
-|-- 02_delong_auc_tests_primary_leakage_safe.csv
-|-- 03_case_level_discordance.csv
-|-- 03_discordance_feature_comparison.csv
-|-- 03_adjusted_discordance_models_mmse_adjusted.csv
-|-- 04_workflow_metrics_vs_expert_stage2.csv
-|-- 05_nri_idi_summary.csv
-|-- 05_categorical_nri_primary.csv
-|-- 06_decision_curve_net_benefit.csv
-|-- 06_dca_resource_translation_per_100.csv
-|-- 07_threshold_sweep_metrics_descriptive_sensitivity_only.csv
-|-- 07_clinical_operating_points_descriptive_not_primary.csv
-|-- README_Q1_extension_outputs.txt
-`-- figures/
-    |-- Figure_Q1_Gray_Zone_Distribution_Check.png
-    |-- Figure_Q1_Performance_Human_AI_Workflows.png
-    |-- Figure_Q1_Workflow_Error_Profile.png
-    |-- Figure_Q1_Decision_Curve_Human_AI.png
-    `-- Figure_Q1_Threshold_Sweep.png
-```
-
-Optional BSI and VAE outputs are generated only when linkable candidate files are available under `--data_root`, such as:
-
-```text
-longitudinal_bsi_validation/individual_bsi_slopes.csv
-longitudinal_bsi_validation/bsi_longitudinal_merged.csv
-vae_revised_output/latent_representations.csv
-vae_revised_output/subtype_assignments.csv
-```
-
-## 3B. Human-AI Rule C Post-Hoc Refinements
-
-Run this after `Human_AI_RuleC_Workflow_Extension.R`.
-
-```bash
-Rscript "3_AI_vs_Clinician_Analysis/Human_AI_RuleC_Posthoc_Refinements.R" \
-  --rulec_dir ./3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension
-```
-
-This script adds:
-
-- z-scored adjusted discordance models
-- paired FP/FN comparison for Rule C versus expert Stage 2
-- bootstrap confidence intervals for DCA net benefit
-
-Outputs are written by default to:
-
-```text
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/posthoc_refinements/
-|-- 10_adjusted_discordance_zscore_results.csv
-|-- 11_ruleC_fp_fn_paired_comparison.csv
-|-- 12_dca_net_benefit_bootstrap_ci_curve.csv
-|-- 12_dca_net_benefit_bootstrap_ci_key_thresholds.csv
-`-- README_posthoc_refinements.txt
-```
-
-## 3C. No-VAE Rule C Sensitivity Analysis
-
-`AI_Prediction_NoVAE.py` should be placed in:
-
-```text
-3_AI_vs_Clinician_Analysis/AI_Prediction_NoVAE.py
-```
-
-This is one of the two manuscript-added analyses not present in the previous GitHub code. It retrains the discovery-stage AI model after excluding VAE latent variables Z1-Z3. It retains non-leakage clinical variables, CSF markers, and structural MRI variables. It then applies the discovery-derived threshold to the independent ADNI holdout cohort and evaluates Rule C with the no-VAE AI model in the expert Stage 2 40-60% gray zone.
-
-Run after the standard AI-vs-clinician files and expert predictions are available:
-
-```bash
-python "3_AI_vs_Clinician_Analysis/AI_Prediction_NoVAE.py" \
-  --data_root . \
-  --output_dir ./3_AI_vs_Clinician_Analysis/NoVAE_Sensitivity \
-  --subtype_file ./subtype_assignments.csv \
-  --clinical_file ./Clinical_data.csv \
-  --smri_file ./RNA_plasma.csv \
-  --csf_file ./metabolites.csv \
-  --test_file ./AI_vs_Clinician_Test/independent_test_set.csv \
-  --expert_file ./AI_vs_Clinician_Test/Expert_Predictions_Long.csv \
-  --n_bootstrap 2000
-```
-
-Main outputs include:
-
-```text
-3_AI_vs_Clinician_Analysis/NoVAE_Sensitivity/
-|-- 00_no_vae_case_level_master.csv
-|-- AI_Predictions_Final_no_vae.csv
-|-- AI_per_patient_predictions_no_vae.csv
-|-- 44_no_vae_feature_audit_and_training_summary.csv
-|-- 45_no_vae_holdout_core_metrics.csv
-|-- 45_no_vae_paired_error_change.csv
-|-- 45_no_vae_categorical_nri.csv
-|-- 45_no_vae_holdout_rulec_performance.csv
-|-- 46_no_vae_decision_curve.csv
-|-- 46_no_vae_decision_curve_key_thresholds.csv
-|-- Supplementary_Figure_30_NoVAE_Ablation.png
-|-- Supplementary_Figure_30_NoVAE_Ablation.pdf
-`-- README_no_vae_sensitivity.txt
-```
-
-Manuscript mapping:
-
-- Supplementary Table 44: no-VAE feature audit and discovery-only training summary
-- Supplementary Table 45: no-VAE holdout performance, paired error change, and categorical NRI
-- Supplementary Table 46: no-VAE decision-curve net benefit at key clinical thresholds
-- Supplementary Figure 30: no-VAE ablation panels
-
-Interpretation:
-
-- This analysis tests whether the Rule C false-positive reduction is driven solely by VAE latent variables.
-- It remains an internal ADNI holdout sensitivity analysis, not external validation.
-- It does not replace the primary frozen multimodal model.
-
-## 3D. Independent Holdout Longitudinal Outcome Sensitivity
-
-`Human_AI_RuleC_Longitudinal_Sensitivity.R` should be placed in:
-
-```text
-3_AI_vs_Clinician_Analysis/Human_AI_RuleC_Longitudinal_Sensitivity.R
-```
-
-This is the second manuscript-added analysis not present in the previous GitHub code. It links baseline AI, expert, Rule C, and no-VAE Rule C assignments to future subject-level annualized trajectories in the independent ADNI holdout cohort.
-
-Run after Rule C and no-VAE outputs are available:
-
-```bash
-Rscript "3_AI_vs_Clinician_Analysis/Human_AI_RuleC_Longitudinal_Sensitivity.R" \
-  --data_root . \
-  --rulec_dir ./3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension \
-  --no_vae_dir ./3_AI_vs_Clinician_Analysis/NoVAE_Sensitivity \
-  --output_dir ./3_AI_vs_Clinician_Analysis/Longitudinal_Outcome_Sensitivity
-```
-
-Expected raw longitudinal files under `--data_root` include:
-
-```text
-ADNI_original_data/LINES/Mini-Mental State Examination (MMSE).csv
-ADNI_original_data/LINES/ADAS-Cognitive Behavior.csv
-ADNI_original_data/LINES/Clinical Dementia Rating.csv
-ADNI_original_data/LINES/Futional Activities Questionnaire.csv
-longitudinal_bsi_validation/individual_bsi_slopes.csv
-longitudinal_bsi_validation/bsi_longitudinal_merged.csv
-```
-
-The script also checks common alternative folder names, including `ADNI_Raw_Data/LINES/`.
-
-Main outputs include:
-
-```text
-3_AI_vs_Clinician_Analysis/Longitudinal_Outcome_Sensitivity/
-|-- 47_slope_availability.csv
-|-- 47_adjusted_trajectory_models.csv
-|-- 48_probability_slope_correlations.csv
-|-- 48_rulec_group_slope_summaries.csv
-|-- README_longitudinal_sensitivity.txt
-`-- figures/
-    |-- Supplementary_Figure_31_Longitudinal_Outcome.png
-    `-- Supplementary_Figure_31_Longitudinal_Outcome.pdf
-```
-
-Manuscript mapping:
-
-- Supplementary Table 47: independent holdout longitudinal outcome availability and adjusted trajectory models
-- Supplementary Table 48: probability-slope correlations and Rule C group slope summaries
-- Supplementary Figure 31: independent ADNI holdout longitudinal outcome panels
-
-Interpretation:
-
-- The analysis evaluates trajectory context beyond binary conversion.
-- MMSE slopes are sign-inverted so higher values indicate greater decline.
-- Adjusted models include age, sex, education, APOE epsilon-4 status, baseline MMSE, and the corresponding baseline outcome value for ADAS13, CDR-SB, FAQ total, and MMSE.
-- BSI models use the same covariate set without an additional baseline outcome term.
-- These findings should be interpreted as supportive trajectory evidence rather than prospective validation.
-
-## 4. External Cohort Framework-Extension Analyses
-
-A4, AIBL VAE transfer, and HABS analyses are retained as external framework-extension components. They should not be described as uniform validation of one fixed full multimodal model.
-
-```bash
-python 4_external_contextualization/Cross_cohort_analysis.py --cohort_name AIBL
-Rscript "4_external_contextualization/AIBL _Validation.R"
-
-python 4_external_contextualization/Cross_cohort_analysis.py --cohort_name A4
-Rscript 4_external_contextualization/A4_validation.R
-
-Rscript 4_external_contextualization/HABS_validation.R
-Rscript 4_external_contextualization/SHAP_analysis.R
-```
-
-## 4A. AIBL Feasibility Gate
-
-`AIBL_Feasibility_Gate.R` rebuilds the AIBL baseline MCI-to-AD endpoint and determines whether AIBL can support full-feature or reduced-feature validation.
-
-```bash
-Rscript 4_external_contextualization/AIBL_Feasibility_Gate.R \
-  --aibl_dir ./aibl_19Sep2019/Data_extract_3.3.0 \
-  --adni_holdout_file ./AI_vs_Clinician_Test/independent_test_set.csv \
-  --adni_discovery_file ./Phase1_ADNI_Discovery/ADNI_Labeled_For_Classifier.csv \
-  --model_config ./step11_results/model_config.rds \
-  --feature_importance ./step11_results/Feature_Importance_RF.csv \
-  --output_dir ./4_external_contextualization/AIBL_Feasibility_Gate
-```
-
-Main outputs include:
-
-```text
-4_external_contextualization/AIBL_Feasibility_Gate/
-|-- 01_aibl_all_baseline_mci_rebuilt.csv
-|-- 02_aibl_eligible_mci_to_ad_conversion_cohort.csv
-|-- 03_aibl_prisma_sample_flow.csv
-|-- 04_aibl_vs_adni_feature_overlap_audit.csv
-|-- 05_aibl_feature_gate_summary.csv
-|-- 06_aibl_reduced_feature_missingness.csv
-|-- 07_aibl_reduced_core_feature_status.csv
-|-- 08_aibl_gate_decision_summary.csv
-|-- 09_aibl_reader_study_blinded_case_packet.csv
-|-- 10_aibl_reader_study_outcome_key_do_not_share.csv
-`-- README_AIBL_feasibility_gate.txt
-```
-
-Interpretation:
-
-- If full multimodal ADNI feature equivalence is available, AIBL can be considered for full-feature frozen-model validation.
-- If full feature equivalence is not available but age, sex, MMSE, and APOE epsilon-4 are harmonizable, proceed with reduced-feature external validation.
-- The blinded case packet can support a future retrospective external reader study, but it is not itself an expert-reader result.
-
-## 4B. AIBL Reduced-Feature External Validation
-
-`AIBL_Reduced_Feature_External_Validation.R` trains a prespecified reduced clinical model in ADNI discovery and applies the frozen preprocessing, coefficients, and threshold once to AIBL.
-
-```bash
-Rscript 4_external_contextualization/AIBL_Reduced_Feature_External_Validation.R \
-  --data_root . \
-  --out_dir ./4_external_contextualization/AIBL_Reduced_Feature_External_Validation
-```
-
-Expected data under `--data_root` include:
-
-```text
-Phase1_ADNI_Discovery/ADNI_Labeled_For_Classifier.csv
-ADNI_original_data/LINES/Subject Demographics.csv
-ADNI_original_data/LINES/Mini-Mental State Examination (MMSE).csv
-ADNI_original_data/LINES/Clinical Dementia Rating.csv
-ADNI_original_data/APOE/ApoE Genotyping - Results.csv
-aibl_19Sep2019/Data_extract_3.3.0/aibl_pdxconv_01-Jun-2018.csv
-aibl_19Sep2019/Data_extract_3.3.0/aibl_mmse_01-Jun-2018.csv
-aibl_19Sep2019/Data_extract_3.3.0/aibl_cdr_01-Jun-2018.csv
-aibl_19Sep2019/Data_extract_3.3.0/aibl_apoeres_01-Jun-2018.csv
-aibl_19Sep2019/Data_extract_3.3.0/aibl_ptdemog_01-Jun-2018.csv
-```
-
-Main outputs include:
-
-```text
-4_external_contextualization/AIBL_Reduced_Feature_External_Validation/
-|-- 01_cohort_summary.csv
-|-- 02_adni_discovery_training_performance.csv
-|-- 03_aibl_external_validation_performance.csv
-|-- 04_frozen_model_coefficients.csv
-|-- 05_aibl_external_predictions.csv
-|-- 06_aibl_bootstrap_metric_ci.csv
-|-- 07_aibl_decision_curve.csv
-|-- 08_frozen_preprocessing_parameters.csv
-|-- 09_aibl_probability_distribution.png
-|-- 10_aibl_decision_curve.png
-`-- 00_README_results_summary.txt
-```
-
-Manuscript interpretation:
-
-- This is true external validation of a prespecified reduced-feature clinical model.
-- It is not direct validation of the full multimodal AI model.
-- Full multimodal AIBL validation would require same-pipeline MRI feature extraction and harmonized multimodal inputs.
-
-## 5. Final Evidence Synthesis
-
-After upstream analyses finish, run the manuscript-facing synthesis script.
-
-```bash
-Rscript 5_final_evidence_synthesis/Evidence_synthesis.R \
-  --step14_dir ./step14_results \
-  --step2_dir ./AI_vs_Clinician_Test \
-  --step16_dir ./step16_results \
-  --step20_dir ./step20_results \
-  --step21_dir ./step21_results \
-  --step12_dir ./step12_results \
-  --step22_dir ./step22_results \
-  --output_dir ./step18_results
-```
-
-`Evidence_synthesis.R` is intended for final aggregation. It should not be run before the discovery, holdout, external, Rule C, no-VAE, and longitudinal branches have generated their outputs.
-
-## Manuscript-Facing Evidence Hierarchy
-
-Preserve the following hierarchy when interpreting outputs:
-
-1. ADNI holdout benchmark: independent participant-level AI-versus-neurologist evaluation.
-2. Rule C workflow: primary translational human-AI analysis, using the AI model as a specificity-oriented second reader in expert Stage 2 gray-zone cases.
-3. AIBL reduced-feature validation: secondary external validation of an ADNI-trained clinical model using harmonized age, sex, MMSE, and APOE epsilon-4 features.
-4. A4 and HABS: framework-extension analyses, not co-primary validation cohorts for the full multimodal model.
-5. VAE and BSI: supporting structural heterogeneity and longitudinal context, not deployment-ready subtype labels.
-6. No-VAE and longitudinal holdout outcome analyses: internal sensitivity and trajectory-context analyses, not new primary validation claims.
-
-This distinction avoids overstatement of external validation and preserves the integrity of the frozen holdout benchmark.
-
-## Key Output Files for the Final Manuscript
-
-For the human-AI Rule C analysis:
-
-```text
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/00_gray_zone_distribution_check.csv
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/04_workflow_metrics_vs_expert_stage2.csv
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/05_categorical_nri_primary.csv
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/06_decision_curve_net_benefit.csv
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/06_dca_resource_translation_per_100.csv
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/posthoc_refinements/11_ruleC_fp_fn_paired_comparison.csv
-3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension/posthoc_refinements/12_dca_net_benefit_bootstrap_ci_key_thresholds.csv
-```
-
-For the no-VAE sensitivity analysis:
-
-```text
-3_AI_vs_Clinician_Analysis/NoVAE_Sensitivity/44_no_vae_feature_audit_and_training_summary.csv
-3_AI_vs_Clinician_Analysis/NoVAE_Sensitivity/45_no_vae_holdout_rulec_performance.csv
-3_AI_vs_Clinician_Analysis/NoVAE_Sensitivity/46_no_vae_decision_curve_key_thresholds.csv
-3_AI_vs_Clinician_Analysis/NoVAE_Sensitivity/Supplementary_Figure_30_NoVAE_Ablation.png
-```
-
-For the longitudinal holdout outcome sensitivity analysis:
-
-```text
-3_AI_vs_Clinician_Analysis/Longitudinal_Outcome_Sensitivity/47_slope_availability.csv
-3_AI_vs_Clinician_Analysis/Longitudinal_Outcome_Sensitivity/47_adjusted_trajectory_models.csv
-3_AI_vs_Clinician_Analysis/Longitudinal_Outcome_Sensitivity/48_probability_slope_correlations.csv
-3_AI_vs_Clinician_Analysis/Longitudinal_Outcome_Sensitivity/48_rulec_group_slope_summaries.csv
-3_AI_vs_Clinician_Analysis/Longitudinal_Outcome_Sensitivity/figures/Supplementary_Figure_31_Longitudinal_Outcome.png
-```
-
-For the AIBL reduced-feature external validation:
-
-```text
-4_external_contextualization/AIBL_Feasibility_Gate/08_aibl_gate_decision_summary.csv
-4_external_contextualization/AIBL_Reduced_Feature_External_Validation/03_aibl_external_validation_performance.csv
-4_external_contextualization/AIBL_Reduced_Feature_External_Validation/05_aibl_external_predictions.csv
-4_external_contextualization/AIBL_Reduced_Feature_External_Validation/06_aibl_bootstrap_metric_ci.csv
-4_external_contextualization/AIBL_Reduced_Feature_External_Validation/07_aibl_decision_curve.csv
-```
+The principal outputs include latent representations, subtype assignments, subtype centroids, model parameters, training diagnostics, and clustering summaries.
 
-For framework-extension analyses:
+## Five-neurologist assessment data
 
-```text
-step20_results/step20_aibl_summary.csv
-step21_results/step21_a4_summary.csv
-step16_results/step16_manuscript_summary.csv
-```
+The five neurologists completed the structured assessment protocol represented in `3_AI_vs_Clinician_Analysis/Expert Assessment Workflow.R`. Stage 1 records the clinical-data estimate. Stage 2 records the estimate after magnetic resonance imaging review. The individual ratings are genuine human assessments and are treated as restricted research data.
 
-## Reproducibility Notes
+Expected long-format variables include:
 
-- The 196-case ADNI holdout benchmark is independent at the participant level from the ADNI discovery cohort.
-- Rule C uses a fixed AI threshold and an a priori expert gray zone; it does not fit new model weights in the holdout set.
-- Simple/rank AI-expert combinations are no-refitting sensitivity analyses.
-- Fitted logistic stacking on the holdout set should be interpreted only as exploratory or cross-validated sensitivity analysis, not as the primary validated model.
-- The no-VAE sensitivity model excludes Z1-Z3 and is retrained using discovery-only preprocessing, feature selection, model tuning, and threshold selection.
-- The AIBL reduced-feature model derives preprocessing parameters, coefficients, and the operating threshold in ADNI discovery and applies them unchanged to AIBL.
-- A4 uses a preclinical cognitive-progression outcome and should not be described as direct MCI-to-AD validation.
-- HABS uses cohort-specific modeling with plasma p-tau217 and therefore evaluates framework adaptability rather than direct ADNI model transfer.
-- VAE subgroup labels are descriptive latent structural profiles and should not be treated as deployment-ready clinical subtypes.
-- BSI analyses provide longitudinal structural context and should be interpreted alongside their borderline and non-monotonic statistical pattern.
-- Longitudinal holdout outcome analyses provide trajectory context; they do not replace prospective clinical validation.
+- case identifier
+- neurologist identifier
+- Stage 1 probability
+- Stage 2 probability
+- confidence rating
+- observed outcome
 
-## Known Scientific Boundaries
+The reader analysis preserves neurologist identity during reader-specific estimation and uses participant-level resampling for pooled confidence intervals.
 
-The manuscript should avoid claiming that the full multimodal MRI/CSF/VAE AI model has been externally validated in AIBL. The correct claim is that AIBL supports transportability of a reduced-feature ADNI-trained clinical model under harmonized feature availability. Full external validation of the complete multimodal model requires the same MRI feature extraction pipeline and harmonized CSF/MRI/VAE inputs in an independent cohort.
+## External and contextual analyses
 
-VAE-derived latent profiles are not causal disease mechanisms. They are data-driven feature representations affected by MRI input structure, education-related separation, sex imbalance, and sample-level stability limitations. The no-VAE and longitudinal sensitivity analyses reduce, but do not eliminate, these concerns.
+The scripts in `4_external_contextualization` address distinct questions:
 
-## Suggested Manuscript Wording
+- `AIBL_Feasibility_Gate.R` evaluates feature and outcome availability.
+- `AIBL reduced-feature external validation.R` evaluates the clinical proxy.
+- `A4_validation.R` evaluates framework extension in the Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease cohort.
+- `HABS_validation.R` evaluates cohort-specific associations in the Harvard Aging Brain Study.
+- `Cross_cohort_analysis.py` projects compatible external data into the latent representation.
+- `SHAP_analysis.R` evaluates feature attribution in the available external framework.
 
-Use:
+These analyses should be interpreted according to the variables and outcomes available in each cohort. They do not all represent full external validation of the complete multimodal model.
 
-```text
-The AIBL analysis externally validated a prespecified reduced-feature clinical model derived in ADNI discovery data.
-```
+## Longitudinal analyses
 
-Avoid:
+`2_discovery_characterization/Cross_modal_validation.R` evaluates annualized whole-brain and ventricular boundary shift integral measures, subtype comparisons, linear mixed models, continuous latent-dimension correlations, and K equals 2 sensitivity analyses.
 
-```text
-The full multimodal AI model was externally validated in AIBL.
-```
+`3_AI_vs_Clinician_Analysis/Human_AI_RuleC_Longitudinal_Sensitivity.R` evaluates longitudinal Mini-Mental State Examination, Alzheimer's Disease Assessment Scale 13-item cognitive subscale, Clinical Dementia Rating Sum of Boxes, Functional Activities Questionnaire, and available boundary shift integral outcomes.
 
-Use:
+These analyses depend on serial observations and may include fewer participants than the baseline cohorts.
 
-```text
-VAE-derived profiles provided descriptive structural context and hypothesis-generating heterogeneity layers.
-```
+## Reproducibility safeguards
 
-Avoid:
+The integrated workflow applies the following controls:
 
-```text
-The VAE identified validated biological disease subtypes.
-```
+1. Strict endpoint construction is separated from model fitting.
+2. Discovery identifiers are excluded from the participant-independent validation cohort.
+3. Imputation and scaling are fitted within the training data of each model pipeline.
+4. Hyperparameter tuning occurs within inner cross-validation folds.
+5. Reader-study participants with discovery overlap receive outer-fold predictions.
+6. Threshold selection excludes the outcome of the participant receiving the prediction.
+7. Random seeds are specified in the analysis scripts.
+8. Aggregate reference values are stored separately from participant-level outputs.
 
-## Troubleshooting
+## Output handling
 
-### Missing data files
+Generated `outputs` and `submission_figures` directories are excluded by `.gitignore`. Inspect `analysis_pipeline/OUTPUT_SCHEMA.md` for the output definitions.
 
-If a script stops with `Missing file`, place the required file under the expected default location or pass the correct path through command-line arguments.
+Before sharing generated files, verify that they contain no participant identifiers, dates, protected health information, or restricted individual ratings. Aggregate tables and figures may be shared only when permitted by the relevant data-use agreements.
 
-### Different AI prediction filenames
+## Result checking
 
-The Rule C script defaults to:
-
-```text
-AI_vs_Clinician_Test/AI_Predictions_Final.csv
-```
-
-The AI prediction script also writes:
-
-```text
-AI_vs_Clinician_Test/AI_per_patient_predictions.csv
-AI_vs_Clinician_Test/AI_test_predictions.csv
-```
-
-If you prefer one of these files, pass it via `--ai_file`.
-
-### No-VAE script cannot find expert predictions
-
-Pass the explicit file path:
-
-```bash
-python "3_AI_vs_Clinician_Analysis/AI_Prediction_NoVAE.py" \
-  --expert_file ./AI_vs_Clinician_Test/Expert_Predictions_Long.csv
-```
-
-### Longitudinal script cannot find ADNI raw records
-
-Pass the correct `--data_root` so that longitudinal ADNI `LINES` files can be found, or update the path candidates in the script.
-
-### AIBL full-feature validation fails
-
-This is expected if AIBL lacks same-pipeline MRI/CSF/VAE features. Use the reduced-feature external validation and report it explicitly as reduced-feature external validation.
-
-### Reader study packet
-
-`AIBL_Feasibility_Gate.R` writes a blinded case packet and a separate outcome key. The outcome key should not be shared with readers during a retrospective reader study.
+`analysis_pipeline/REFERENCE_RESULTS.json` stores selected aggregate sample sizes and performance estimates reported by the analysis. It is intended for deterministic comparison after a complete run. Minor differences may arise from software versions in iterative optimization, but cohort counts and prespecified endpoint totals should agree exactly.
 
 ## Citation
 
-If you use this repository, please cite the associated manuscript and the originating cohort studies.
+Citation metadata are provided in `CITATION.cff`. When using this code, cite the associated manuscript and the original cohort publications required by the applicable data-use agreements.
 
 ## License
 
-This repository is released under the MIT License. See `LICENSE`.
+The source code is released under the MIT License. The license applies to the code only and does not grant permission to redistribute cohort data, imaging, expert ratings, or other restricted study materials.
+
+## Repository
+
+https://github.com/vshi2316/AD_Multimodal_Study
