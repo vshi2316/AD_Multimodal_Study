@@ -705,7 +705,7 @@ cat("  Saved: Figure_MRI_Heatmap.png\n")
 cat("\n  Generating summary report...\n")
 summary_lines <- c(
   "================================================================================",
-  "Step 22: MRI Subtype Characterization Report (Revised)",
+  "Step 22: MRI Subtype Characterization Report",
   "================================================================================",
   "",
   sprintf("Generated: %s", Sys.time()),
