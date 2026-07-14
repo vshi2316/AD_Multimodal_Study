@@ -6,7 +6,7 @@ option_list <- list(
   make_option(c("--rulec_dir"), type = "character", default = "./3_AI_vs_Clinician_Analysis/Q1_Human_AI_Extension",
               help = "Output directory from Human_AI_RuleC_Workflow_Extension.R [default: %default]"),
   make_option(c("--output_dir"), type = "character", default = NULL,
-              help = "Output directory [default: <rulec_dir>/posthoc_refinements]"),
+              help = "Output directory [default: <rulec_dir>/posthoc_analyses]"),
   make_option(c("--seed"), type = "integer", default = 20260614,
               help = "Random seed [default: %default]")
 )
@@ -33,7 +33,7 @@ if (!file.exists(master_path)) {
   stop("Missing master file: ", master_path, call. = FALSE)
 }
 
-out_dir <- if (is.null(opt$output_dir)) file.path(base_dir, "posthoc_refinements") else opt$output_dir
+out_dir <- if (is.null(opt$output_dir)) file.path(base_dir, "posthoc_analyses") else opt$output_dir
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 write_csv_safe <- function(x, path) readr::write_csv(x, path, na = "")
@@ -320,7 +320,7 @@ dca_key_threshold_ci <- dca_curve_ci %>%
 write_csv_safe(dca_key_threshold_ci, file.path(out_dir, "12_dca_net_benefit_bootstrap_ci_key_thresholds.csv"))
 
 summary_lines <- c(
-  "Post-hoc refinements completed.",
+  "Post-hoc analyses completed.",
   paste0("Output dir: ", out_dir),
   "Files:",
   "10_adjusted_discordance_zscore_results.csv",
@@ -328,7 +328,7 @@ summary_lines <- c(
   "12_dca_net_benefit_bootstrap_ci_curve.csv",
   "12_dca_net_benefit_bootstrap_ci_key_thresholds.csv"
 )
-writeLines(summary_lines, con = file.path(out_dir, "README_posthoc_refinements.txt"))
+writeLines(summary_lines, con = file.path(out_dir, "README_posthoc_analyses.txt"))
 
 cat("Done.\n")
 cat("Outputs written to: ", out_dir, "\n", sep = "")
