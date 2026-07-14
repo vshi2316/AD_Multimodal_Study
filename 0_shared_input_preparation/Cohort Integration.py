@@ -1,5 +1,3 @@
-"""
-
 import argparse
 import pandas as pd
 import numpy as np
@@ -16,7 +14,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description='Cohort Integration with Frozen Pipeline'
+        description='Cohort integration and preprocessing'
     )
     parser.add_argument('--data_dir', type=str,
                         default='./processed_data',
@@ -55,7 +53,7 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
                                     discovery_output='ADNI_Discovery_Scaled.csv',
                                     test_output='ADNI_Test_Scaled.csv'):
     """
-    Main function implementing the Frozen Pipeline Strategy.
+    Integrate cohort tables and fit preprocessing on the development data.
     
  
     
@@ -69,7 +67,7 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
         test_output: Filename for test set
     """
     print("=" * 70)
-    print("Step 7: Cohort Integration with Frozen Pipeline Strategy")
+    print("Step 7: Cohort Integration and Preprocessing")
     print("=" * 70)
     
     np.random.seed(seed)
@@ -332,12 +330,12 @@ def integrate_and_process_strictly(data_dir, output_dir, test_size=196,
     # Summary Report
     # =========================================================================
     print("\n" + "=" * 70)
-    print("FROZEN PIPELINE STRATEGY - COMPLIANCE SUMMARY")
+    print("COHORT INTEGRATION SUMMARY")
     print("=" * 70)
    
     print("\n" + "=" * 70)
     print("Step 7: Cohort Integration Complete")
-    print("DATA LEAKAGE PREVENTION GUARANTEED")
+    print("PREPROCESSING FIT ON DEVELOPMENT DATA")
     print("=" * 70)
     
     return discovery_data, test_data
