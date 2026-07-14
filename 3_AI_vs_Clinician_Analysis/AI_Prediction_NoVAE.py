@@ -1,5 +1,6 @@
 """
 No-VAE sensitivity analysis for the AD multimodal human-AI Rule C workflow.
+"""
 
 from __future__ import annotations
 
