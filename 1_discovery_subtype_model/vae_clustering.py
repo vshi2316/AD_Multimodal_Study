@@ -55,7 +55,7 @@ parser.add_argument("--winsorize_sd",type=float, default=3.0)
 args = parser.parse_args()
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if args.output_dir is None:
-    args.output_dir = os.path.join(args.input_dir, "vae_revised_output")
+    args.output_dir = os.path.join(args.input_dir, "VAE_Output")
 os.makedirs(args.output_dir, exist_ok=True)
 # ===================== Variable Definitions =====================
 # Feature ordering in VAE matrix: CSF first, then Clinical, then MRI.
