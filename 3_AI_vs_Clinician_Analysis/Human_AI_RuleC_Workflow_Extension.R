@@ -1721,8 +1721,8 @@ vae_candidate_paths <- c(
   file.path(base_dir, "longitudinal_bsi_validation/bsi_longitudinal_merged.csv"),
   file.path(base_dir, "longitudinal_bsi_validation/individual_bsi_slopes.csv"),
   file.path(base_dir, "PET_cohort_analysis/PET_latent_representations.csv"),
-  file.path(base_dir, "vae_revised_output/latent_representations.csv"),
-  file.path(base_dir, "vae_revised_output/subtype_assignments.csv")
+  file.path(base_dir, "VAE_Output/latent_representations.csv"),
+  file.path(base_dir, "VAE_Output/subtype_assignments.csv")
 )
 
 vae_candidates <- purrr::map(vae_candidate_paths, standardize_vae_candidate) %>%
