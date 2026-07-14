@@ -623,7 +623,7 @@ ggsave(file.path(output_dir, "Calibration_Plot.png"),
 # Summary Report
 # ==============================================================================
 cat("\n======================================================================\n")
-cat("Step 11 Complete: Predictive Modeling (Revised)\n")
+cat("Step 11 Complete: Predictive Modeling\n")
 cat("======================================================================\n\n")
 cat("Pipeline:\n")
 cat(sprintf("  Input: 37-var VAE outputs + raw multimodal data\n"))
