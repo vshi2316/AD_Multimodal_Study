@@ -1,5 +1,3 @@
-"""
-
 import argparse
 import pandas as pd
 import numpy as np
@@ -97,7 +95,7 @@ def preprocess_clinical(data_dir, output_file, output_dir):
     """
     print("=" * 70)
     print("Step 3: Clinical Assessment Preprocessing ")
-    print("CORRECTED: No premature MICE/standardization (deferred to Step 7)")
+    print("MICE imputation and standardization are deferred to Step 7")
     print("=" * 70)
     
     # Create output directory
