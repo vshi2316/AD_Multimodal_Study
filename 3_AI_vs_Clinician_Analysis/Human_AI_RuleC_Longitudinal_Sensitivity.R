@@ -238,22 +238,18 @@ load_no_vae <- function() {
 
 load_raw_longitudinal <- function() {
   mmse_path <- first_existing(
-    file.path(base_dir, "ADNI原始数据", "LINES", "Mini-Mental State Examination (MMSE).csv"),
     file.path(base_dir, "ADNI_Raw_Data", "LINES", "Mini-Mental State Examination (MMSE).csv"),
     file.path(base_dir, "LINES", "Mini-Mental State Examination (MMSE).csv")
   )
   adas_path <- first_existing(
-    file.path(base_dir, "ADNI原始数据", "LINES", "ADAS-Cognitive Behavior.csv"),
     file.path(base_dir, "ADNI_Raw_Data", "LINES", "ADAS-Cognitive Behavior.csv"),
     file.path(base_dir, "LINES", "ADAS-Cognitive Behavior.csv")
   )
   cdr_path <- first_existing(
-    file.path(base_dir, "ADNI原始数据", "LINES", "Clinical Dementia Rating.csv"),
     file.path(base_dir, "ADNI_Raw_Data", "LINES", "Clinical Dementia Rating.csv"),
     file.path(base_dir, "LINES", "Clinical Dementia Rating.csv")
   )
   faq_path <- first_existing(
-    file.path(base_dir, "ADNI原始数据", "LINES", "Futional Activities Questionnaire.csv"),
     file.path(base_dir, "ADNI_Raw_Data", "LINES", "Futional Activities Questionnaire.csv"),
     file.path(base_dir, "LINES", "Futional Activities Questionnaire.csv")
   )
