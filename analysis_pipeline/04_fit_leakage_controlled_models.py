@@ -31,7 +31,7 @@ BOOTSTRAP_REPS = 2000
 
 CLINICAL = ["MMSE_Baseline", "Education", "APOE4_Copies"]
 CSF = ["ABETA42", "TAU_TOTAL", "PTAU181"]
-LEGACY_TRANSPORTABLE = [
+SIX_FEATURE_ABLATION = [
     "MMSE_Baseline",
     "Education",
     "ST105CV",
@@ -219,7 +219,7 @@ def main() -> None:
         "clinical_plus_csf": CLINICAL + CSF,
         "clinical_plus_mri": CLINICAL + mri,
         "primary_transportable_multimodal": CLINICAL + CSF + mri,
-        "legacy_selected_without_gds_abeta40_vae": LEGACY_TRANSPORTABLE,
+        "exploratory_six_feature_ablation": SIX_FEATURE_ABLATION,
     }
     y_discovery = discovery["Strict36_Outcome"].astype(int).to_numpy()
 
@@ -289,7 +289,7 @@ def main() -> None:
 
     performance = pd.DataFrame(performance_rows)
     performance.to_csv(OUT / "leakage_free_model_performance.csv", index=False)
-    predictions.to_csv(OUT / "independent41_new_model_predictions.csv", index=False)
+    predictions.to_csv(OUT / "reader_nonoverlap_model_predictions.csv", index=False)
     with (OUT / "leakage_free_model_summary.json").open("w", encoding="utf-8") as handle:
         json.dump(model_summary, handle, indent=2, ensure_ascii=False)
 
