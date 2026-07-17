@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/29989673/README.md)
+[README.md](https://github.com/user-attachments/files/30114315/README.md)
 # AD Multimodal Study
 
 Code supporting the manuscript:
@@ -19,7 +19,7 @@ The evidence structure includes:
 2. Cross-fitted model predictions for reader-study participants who overlap the discovery cohort.
 3. Frozen model predictions for reader-study participants without discovery overlap.
 4. A participant-independent Alzheimer Disease Neuroimaging Initiative validation cohort with 318 participants and no discovery identifiers.
-5. A clinical-proxy validation in the Australian Imaging, Biomarker and Lifestyle cohort.
+5. A clinical-proxy validation in the Australian Imaging, Biomarkers and Lifestyle cohort.
 6. Exploratory analyses in the Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease and Harvard Aging Brain Study cohorts.
 7. Longitudinal boundary shift integral and cognitive outcome sensitivity analyses.
 
@@ -31,7 +31,7 @@ The five-reader benchmark contains 153 participants, 77 events, 76 non-events, f
 
 The participant-independent Alzheimer Disease Neuroimaging Initiative benchmark contains 318 participants, including 104 events. The clinical plus magnetic resonance imaging model achieved an area under the receiver operating characteristic curve of 0.752, with a 95% confidence interval from 0.695 to 0.810. The complete clinical, cerebrospinal fluid, and magnetic resonance imaging model achieved an area under the curve of 0.720; cerebrospinal fluid measurements were available for 29 participants, so this estimate requires cautious interpretation.
 
-The Australian Imaging, Biomarker and Lifestyle clinical-proxy analysis contains 34 participants and 16 events. The age, sex, Mini-Mental State Examination, and apolipoprotein E epsilon 4 model achieved an area under the curve of 0.759, with a 95% confidence interval from 0.597 to 0.908. This analysis evaluates transportability of a clinical proxy and does not constitute complete external validation of the magnetic resonance imaging and cerebrospinal fluid model.
+The Australian Imaging, Biomarkers and Lifestyle clinical-proxy analysis contains 34 participants and 16 events. The age, sex, Mini-Mental State Examination, and apolipoprotein E epsilon 4 model achieved an area under the curve of 0.759, with a 95% confidence interval from 0.597 to 0.908. This analysis evaluates transportability of a clinical proxy and does not constitute complete external validation of the magnetic resonance imaging and cerebrospinal fluid model.
 
 Reference values used to check generated aggregate results are stored in `analysis_pipeline/REFERENCE_RESULTS.json`.
 
@@ -76,7 +76,7 @@ AD_Multimodal_Study/
 
 `3_AI_vs_Clinician_Analysis` contains the five-neurologist assessment workflow, artificial intelligence predictions, Rule C analyses, no-latent-variable analyses, post hoc analyses, and longitudinal outcome sensitivity analyses.
 
-`4_external_contextualization` contains Australian Imaging, Biomarker and Lifestyle feasibility and clinical-proxy analyses, Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease analyses, Harvard Aging Brain Study analyses, cross-cohort projections, and feature-attribution analyses.
+`4_external_contextualization` contains Australian Imaging, Biomarkers and Lifestyle feasibility and clinical-proxy analyses, Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease analyses, Harvard Aging Brain Study analyses, cross-cohort projections, and feature-attribution analyses.
 
 `5_final_evidence_synthesis` contains evidence-summary code for combining outputs from the component analyses.
 
@@ -89,7 +89,7 @@ Source data must be obtained from the organizations that govern each cohort. Use
 The analyses use data from:
 
 1. Alzheimer's Disease Neuroimaging Initiative.
-2. Australian Imaging, Biomarker and Lifestyle study.
+2. Australian Imaging, Biomarkers and Lifestyle study.
 3. Anti-Amyloid Treatment in Asymptomatic Alzheimer's Disease study.
 4. Harvard Aging Brain Study.
 5. Fox Lab longitudinal boundary shift integral outputs.
@@ -164,7 +164,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Principal Python packages include NumPy, pandas, SciPy, scikit-learn, statsmodels, TensorFlow, Keras, matplotlib, seaborn, and joblib.
+Principal Python packages include NumPy, pandas, SciPy, scikit-learn, statsmodels, PyTorch, matplotlib, seaborn, and joblib.
 
 Install the R packages required by the component scripts:
 
@@ -216,7 +216,7 @@ The selected interval assumes that required outputs from preceding steps already
 
 Script: `analysis_pipeline/01_define_36m_endpoints.py`
 
-This step identifies the mild cognitive impairment baseline, calculates time from baseline to Alzheimer disease diagnosis, applies the strict 36-month endpoint, and constructs a visit-window sensitivity endpoint for the Alzheimer Disease Neuroimaging Initiative and Australian Imaging, Biomarker and Lifestyle cohorts.
+This step identifies the mild cognitive impairment baseline, calculates time from baseline to Alzheimer disease diagnosis, applies the strict 36-month endpoint, and constructs a visit-window sensitivity endpoint for the Alzheimer Disease Neuroimaging Initiative and Australian Imaging, Biomarkers and Lifestyle cohorts.
 
 Principal outputs:
 
@@ -262,10 +262,12 @@ This step fits elastic-net logistic models within pipelines containing median im
 
 Candidate feature sets include clinical variables, clinical plus magnetic resonance imaging variables, and the complete clinical plus cerebrospinal fluid plus magnetic resonance imaging panel.
 
+An exploratory six-feature ablation uses baseline Mini-Mental State Examination, education, right pars orbitalis volume, right paracentral thickness variability, right postcentral thickness variability, and right posterior cingulate volume.
+
 Principal outputs:
 
 - `leakage_free_model_performance.csv`
-- `independent41_new_model_predictions.csv`
+- `reader_nonoverlap_model_predictions.csv`
 - `nested_tuning_*.csv`
 - `final_coefficients_*.csv`
 
@@ -273,7 +275,7 @@ Principal outputs:
 
 Script: `analysis_pipeline/05_validate_aibl_clinical_proxy.py`
 
-This step fits the age, sex, Mini-Mental State Examination, and apolipoprotein E epsilon 4 model in the Alzheimer Disease Neuroimaging Initiative development data and evaluates frozen predictions in eligible Australian Imaging, Biomarker and Lifestyle participants.
+This step fits the age, sex, Mini-Mental State Examination, and apolipoprotein E epsilon 4 model in the Alzheimer Disease Neuroimaging Initiative development data and evaluates frozen predictions in eligible Australian Imaging, Biomarkers and Lifestyle participants.
 
 Principal outputs:
 
@@ -305,9 +307,9 @@ This step identifies Alzheimer Disease Neuroimaging Initiative participants with
 
 Principal outputs:
 
-- `new_nonoverlapping_adni_benchmark_predictions.csv`
-- `new_nonoverlapping_adni_benchmark_performance.csv`
-- `new_nonoverlapping_adni_benchmark_subgroups.csv`
+- `nonoverlapping_adni_validation_predictions.csv`
+- `nonoverlapping_adni_validation_performance.csv`
+- `nonoverlapping_adni_validation_subgroups.csv`
 
 ### Step 8: Generate cross-fitted reader-study predictions
 
