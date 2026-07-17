@@ -125,7 +125,7 @@ def fit_contribution_model() -> tuple[pd.DataFrame, pd.DataFrame, float]:
     helpers = load_module("04_fit_leakage_controlled_models.py", "model_helpers_fig")
     discovery = pd.read_csv(OUT / "adni_discovery_raw_aligned_features.csv", low_memory=False)
     discovery = discovery.loc[discovery["Strict36_Outcome"].notna()].copy()
-    validation = pd.read_csv(OUT / "new_nonoverlapping_adni_benchmark_predictions.csv", low_memory=False)
+    validation = pd.read_csv(OUT / "nonoverlapping_adni_validation_predictions.csv", low_memory=False)
     mri = [col for col in discovery.columns if col.startswith("ST")]
     features = helpers.CLINICAL + mri
     y = discovery["Strict36_Outcome"].astype(int).to_numpy()
@@ -252,7 +252,7 @@ def figure2() -> None:
     benchmark = benchmark.loc[benchmark["Analysis_Model"] == "primary_clinical_csf_mri"].sort_values("ID")
     per_reader = pd.read_csv(OUT / "crossfitted_expert_per_reader.csv")
     per_reader = per_reader.loc[per_reader["Analysis_Model"] == "primary_clinical_csf_mri"]
-    independent = pd.read_csv(OUT / "new_nonoverlapping_adni_benchmark_predictions.csv", low_memory=False)
+    independent = pd.read_csv(OUT / "nonoverlapping_adni_validation_predictions.csv", low_memory=False)
     y = benchmark["Strict36_Outcome"].astype(int).to_numpy()
     fig, axes = plt.subplots(2, 2, figsize=(10.2, 8.4))
     plot_roc(
@@ -310,7 +310,7 @@ def figure2() -> None:
 
 def figure3() -> None:
     perf = pd.read_csv(OUT / "leakage_free_model_performance.csv")
-    validation_perf = pd.read_csv(OUT / "new_nonoverlapping_adni_benchmark_subgroups.csv")
+    validation_perf = pd.read_csv(OUT / "nonoverlapping_adni_validation_subgroups.csv")
     validation, contributions, intercept = fit_contribution_model()
     coefficients = pd.read_csv(OUT / "clinical_mri_final_coefficients_for_figure.csv")
     fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.8))
@@ -322,7 +322,7 @@ def figure3() -> None:
         "clinical_plus_csf": "Clinical + CSF",
         "clinical_plus_mri": "Clinical + MRI",
         "primary_transportable_multimodal": "Clinical + CSF + MRI",
-        "legacy_selected_without_gds_abeta40_vae": "Selected-feature ablation",
+        "exploratory_six_feature_ablation": "Six-feature ablation",
     }
     oof["Label"] = oof["Model"].map(label_map)
     oof = oof.sort_values("AUC")
@@ -475,8 +475,8 @@ def supplementary_figures() -> None:
     per_reader = per_reader.loc[per_reader["Analysis_Model"] == "primary_clinical_csf_mri"]
     dca = pd.read_csv(OUT / "final_pooled_rulec_dca.csv")
     cross_perf = pd.read_csv(OUT / "crossfitted_expert_performance.csv")
-    subgroup = pd.read_csv(OUT / "new_nonoverlapping_adni_benchmark_subgroups.csv")
-    independent = pd.read_csv(OUT / "new_nonoverlapping_adni_benchmark_predictions.csv", low_memory=False)
+    subgroup = pd.read_csv(OUT / "nonoverlapping_adni_validation_subgroups.csv")
+    independent = pd.read_csv(OUT / "nonoverlapping_adni_validation_predictions.csv", low_memory=False)
     aibl = pd.read_csv(OUT / "aibl_harmonized_predictions.csv", low_memory=False)
     aibl = aibl.loc[aibl["Strict36_Outcome"].notna()].copy()
 
