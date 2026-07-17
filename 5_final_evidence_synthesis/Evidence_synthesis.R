@@ -21,7 +21,7 @@ option_list <- list(
   make_option(c("--step22_dir"), type = "character", default = "./step22_results",
               help = "Directory containing step22 outputs [default: %default]"),
   make_option(c("--external_file"), type = "character", default = "External_Validation_Performance.csv",
-              help = "Legacy external summary used only as a fallback [default: %default]"),
+              help = "Auxiliary external summary used only when cohort-specific summaries are unavailable [default: %default]"),
   make_option(c("--output_dir"), type = "character", default = "./step18_results",
               help = "Output directory [default: %default]")
 )
@@ -81,12 +81,12 @@ cat("[3/4] Loading external cohort evidence\n")
 evidence$aibl_summary <- safe_csv(file.path(opt$step20_dir, "step20_aibl_summary.csv"))
 evidence$a4_summary <- safe_csv(file.path(opt$step21_dir, "step21_a4_summary.csv"))
 evidence$habs_summary <- safe_csv(file.path(opt$step16_dir, "step16_manuscript_summary.csv"))
-evidence$legacy_external <- NULL
+evidence$external_fallback <- NULL
 
 if (is.null(evidence$aibl_summary) && is.null(evidence$a4_summary) && is.null(evidence$habs_summary)) {
-  evidence$legacy_external <- safe_csv(opt$external_file)
-  if (!is.null(evidence$legacy_external)) {
-    cat("  Warning: falling back to legacy external summary file\n")
+  evidence$external_fallback <- safe_csv(opt$external_file)
+  if (!is.null(evidence$external_fallback)) {
+    cat("  Warning: using the auxiliary external summary file\n")
   }
 }
 
@@ -206,25 +206,25 @@ if (!is.null(evidence$habs_summary)) {
   }
 }
 
-if (length(external_rows) == 0 && !is.null(evidence$legacy_external)) {
-  legacy_rows <- lapply(seq_len(nrow(evidence$legacy_external)), function(i) {
-    x <- evidence$legacy_external[i, ]
+if (length(external_rows) == 0 && !is.null(evidence$external_fallback)) {
+  fallback_rows <- lapply(seq_len(nrow(evidence$external_fallback)), function(i) {
+    x <- evidence$external_fallback[i, ]
     ci_vals <- parse_ci_string(x$AUC_95CI)
     data.frame(
       Cohort = x$Cohort,
       N = x$N,
       Population = x$Population,
-      Validation_Dimension = "Legacy External Summary",
-      Primary_Metric = "AUC (legacy summary)",
+      Validation_Dimension = "Auxiliary External Summary",
+      Primary_Metric = "AUC (auxiliary summary)",
       Result = format_result(x$AUC, ci_vals[1], ci_vals[2]),
       P_Value = sprintf("Conv=%s", x$Conversion_Rate),
       MRI_Significant = "N/A",
       MRI_Top_Effect = "N/A",
-      OR_Note = "Legacy fallback summary",
+      OR_Note = "Auxiliary fallback summary",
       stringsAsFactors = FALSE
     )
   })
-  external_rows <- legacy_rows
+  external_rows <- fallback_rows
 }
 
 master_table <- bind_rows(c(list(discovery_row, test_row), external_rows))
