@@ -113,23 +113,23 @@ def main() -> None:
         result.update(
             {
                 "Model": name,
-                "Dataset": "new_nonoverlapping_ADNI_strict36",
+                "Dataset": "nonoverlapping_ADNI_strict36",
                 "Best_C": final.best_params_["model__C"],
                 "Best_L1_Ratio": final.best_params_["model__l1_ratio"],
             }
         )
         performance_rows.append(result)
 
-    eligible.to_csv(OUT / "new_nonoverlapping_adni_benchmark_predictions.csv", index=False)
+    eligible.to_csv(OUT / "nonoverlapping_adni_validation_predictions.csv", index=False)
     performance = pd.DataFrame(performance_rows)
-    performance.to_csv(OUT / "new_nonoverlapping_adni_benchmark_performance.csv", index=False)
+    performance.to_csv(OUT / "nonoverlapping_adni_validation_performance.csv", index=False)
 
     phase_summary = (
         eligible.groupby("Baseline_PHASE")["Strict36_Outcome"]
         .agg(N="count", Events="sum", Event_Rate="mean")
         .reset_index()
     )
-    phase_summary.to_csv(OUT / "new_nonoverlapping_adni_benchmark_subgroups.csv", index=False)
+    phase_summary.to_csv(OUT / "nonoverlapping_adni_validation_subgroups.csv", index=False)
     summary = {
         "baseline_mci_candidates_after_discovery_exclusion": int(len(endpoints)),
         "strict36_endpoint_eligible_before_feature_filter": int(endpoints["Strict36_Outcome"].notna().sum()),
@@ -140,7 +140,7 @@ def main() -> None:
         "all_three_csf_markers_available_n": int(eligible[model_helpers.CSF].notna().all(axis=1).sum()),
         "phases": phase_summary.to_dict(orient="records"),
     }
-    with (OUT / "new_nonoverlapping_adni_benchmark_summary.json").open("w", encoding="utf-8") as handle:
+    with (OUT / "nonoverlapping_adni_validation_summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, ensure_ascii=False)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     print("\nPerformance:")
