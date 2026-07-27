@@ -64,6 +64,12 @@ def parse_args():
     parser.add_argument("--output_dir", default="./step9A_results", help="Output directory")
     parser.add_argument("--cohort_name", default="external", help="Cohort label")
     parser.add_argument("--id_col", default="ID", help="ID column in the external cohort file")
+    parser.add_argument(
+        "--input_scale",
+        required=True,
+        choices=["discovery_zscore"],
+        help="Scale of the external features supplied to the frozen encoder",
+    )
     return parser.parse_args()
 
 
@@ -116,12 +122,20 @@ def main():
     feature_list = summary["features"]
     source_map = summary.get("source_map", artifacts.get("source_map", {}))
     imputer_statistics = np.array(artifacts.get("imputer_statistics", [0.0] * len(feature_list)), dtype=float)
+    fitted_scale = artifacts.get("input_scale", summary.get("input_scale"))
+    if fitted_scale != args.input_scale:
+        raise ValueError(
+            f"External input scale {args.input_scale!r} does not match the fitted scale {fitted_scale!r}"
+        )
 
     matrix_df, missing_features = build_feature_matrix(external, feature_list, source_map, imputer_statistics)
     x = matrix_df[feature_list].values.astype(np.float32)
 
-    winsorize_sd = float(summary.get("winsorize_sd", 3.0))
-    x = np.clip(x, -winsorize_sd, winsorize_sd)
+    winsor_lower = np.asarray(artifacts.get("winsor_lower"), dtype=float)
+    winsor_upper = np.asarray(artifacts.get("winsor_upper"), dtype=float)
+    if winsor_lower.shape != (len(feature_list),) or winsor_upper.shape != (len(feature_list),):
+        raise ValueError("Discovery-cohort winsorization limits are missing or incomplete")
+    x = np.clip(x, winsor_lower, winsor_upper)
 
     d_in = len(feature_list)
     h1 = int(summary.get("hidden1", 256))
@@ -161,6 +175,7 @@ def main():
         "n_participants": int(len(assign_df)),
         "n_missing_features_filled": int(len(missing_features)),
         "missing_features_filled": missing_features,
+        "input_scale": args.input_scale,
         "subtype_counts": assign_df["Projected_Subtype"].value_counts().sort_index().to_dict(),
     }
     with open(os.path.join(args.output_dir, f"{args.cohort_name}_projection_summary.json"), "w", encoding="utf-8") as handle:
