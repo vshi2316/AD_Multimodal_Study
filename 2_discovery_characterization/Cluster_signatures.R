@@ -656,7 +656,7 @@ for (i in 1:nrow(top15)) {
 # Summary report text file
 summary_lines <- c(
   "================================================================================",
-  "Step 12: Cluster Signature Analysis — Summary Report",
+                   "Step 12: Cluster Signature Analysis, Summary Report",
   "================================================================================",
   "",
   sprintf("Participants: %d", nrow(master)),
