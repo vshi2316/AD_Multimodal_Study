@@ -282,20 +282,31 @@ def preprocess(vae_df, csf_names, winsorize_sd=3.0):
         print(f"    These are likely high-missingness vars filled with median.")
     # NO log1p
     print(f"\n  Skipping log1p (data is pre-standardized z-scores)")
-    # Winsorize ALL columns at +/-winsorize_sd
+    # Estimate and retain discovery-cohort winsorization limits.
     n_clip = 0
+    winsor_lower = np.empty(X.shape[1], dtype=float)
+    winsor_upper = np.empty(X.shape[1], dtype=float)
     for i in range(X.shape[1]):
         mu, sd = X[:,i].mean(), X[:,i].std()
         if sd < 1e-12:
+            winsor_lower[i] = mu
+            winsor_upper[i] = mu
             continue
         lo, hi = mu - winsorize_sd * sd, mu + winsorize_sd * sd
+        winsor_lower[i] = lo
+        winsor_upper[i] = hi
         n_clip += int(np.sum((X[:,i] < lo) | (X[:,i] > hi)))
         X[:,i] = np.clip(X[:,i], lo, hi)
     print(f"  Winsorized {n_clip} values at +/-{winsorize_sd} SD")
     # NO StandardScaler
     print(f"  SkippingStandardScaler (data is pre-standardized)")
     print(f"  Final matrix: {X.shape[0]} x {X.shape[1]}")
-    return X, ids, feat, None, imp
+    preprocessing = {
+        "input_scale": "discovery_zscore",
+        "winsor_lower": winsor_lower.tolist(),
+        "winsor_upper": winsor_upper.tolist(),
+    }
+    return X, ids, feat, preprocessing, imp
 # ===================== VAE Model =====================
 class Encoder(nn.Module):
     def __init__(self, d_in, h1, h2, d_z):
@@ -588,6 +599,7 @@ def plot_k_selection(X, Z, out, k_range=range(2, 8)):
     print(f"  Saved k_selection.png")
 # ===================== Export =====================
 def export_all(ids, lab_vae, lab_dir, demo_df, outcome_df, Z, model, km, imp,
+               preprocessing,
                comp, vae_m, dir_m, sex_res, feat, source_map,
                csf_names, clin_names, mri_cols, out, args, hist):
     print(f"\n[8/8] Exporting...")
@@ -643,6 +655,7 @@ def export_all(ids, lab_vae, lab_dir, demo_df, outcome_df, Z, model, km, imp,
         "hidden2": args.hidden2,
         "lr": args.lr,
         "winsorize_sd": args.winsorize_sd,
+        "input_scale": preprocessing["input_scale"],
         "vae_metrics": {k: float(v) for k, v in vae_m.items()},
         "direct_metrics": {k: float(v) for k, v in dir_m.items()},
         "comparison": {k: float(v) for k, v in comp.items()},
@@ -672,6 +685,9 @@ def export_all(ids, lab_vae, lab_dir, demo_df, outcome_df, Z, model, km, imp,
         pickle.dump({"features": feat, "source_map": source_map,
                       "args": vars(args),
                       "imputer_statistics": imp.statistics_.tolist(),
+                      "input_scale": preprocessing["input_scale"],
+                      "winsor_lower": preprocessing["winsor_lower"],
+                      "winsor_upper": preprocessing["winsor_upper"],
                       "cluster_centers": km.cluster_centers_.tolist()}, f)
     centroids_df = pd.DataFrame(
         km.cluster_centers_,
@@ -685,7 +701,9 @@ def export_all(ids, lab_vae, lab_dir, demo_df, outcome_df, Z, model, km, imp,
 def main():
     vae_df, demo_df, outcome_df, source_map, csf_names, clin_names, mri_cols = \
         load_data(args.input_dir)
-    X, ids, feat, scaler, imp = preprocess(vae_df, csf_names, args.winsorize_sd)
+    X, ids, feat, preprocessing, imp = preprocess(
+        vae_df, csf_names, args.winsorize_sd
+    )
     # Modality boundary indices (critical for weighted loss)
     n_csf = len(csf_names)
     n_clin = len(clin_names)
@@ -713,6 +731,7 @@ def main():
     plot_k_selection(X, Z, args.output_dir)
     # Export
     export_all(ids, lab_vae, lab_dir, demo_df, outcome_df, Z, model, km, imp,
+               preprocessing,
                comp, vae_m, dir_m, sex_res, feat, source_map,
                csf_names, clin_names, mri_cols, args.output_dir, args, hist)
     print("\n" + "=" * 70)
@@ -720,5 +739,4 @@ def main():
     print("=" * 70)
 if __name__ == "__main__":
     main()
-
 
