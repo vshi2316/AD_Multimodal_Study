@@ -50,7 +50,7 @@ np.random.seed(42)
 torch.manual_seed(42)
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="AI Prediction — Frozen Pipeline with VAE Encoder Inference")
+    description="AI prediction with a frozen pipeline and VAE encoder inference")
     parser.add_argument("--base_dir", type=str,
         default=".",
         help="Directory containing ALL required files")
