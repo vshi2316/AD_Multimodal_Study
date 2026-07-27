@@ -177,7 +177,15 @@ def stratified_indices(y: np.ndarray, rng: np.random.Generator) -> np.ndarray:
 
 def bootstrap_ci(y: np.ndarray, p: np.ndarray, threshold: float) -> dict:
     rng = np.random.default_rng(SEED)
-    values = {key: [] for key in ["AUC", "Brier", "Sensitivity", "Specificity"]}
+    metric_names = [
+        "AUC",
+        "Brier",
+        "Sensitivity",
+        "Specificity",
+        "Calibration_Intercept",
+        "Calibration_Slope",
+    ]
+    values = {key: [] for key in metric_names}
     for _ in range(BOOTSTRAP_REPS):
         idx = stratified_indices(y, rng)
         yy = y[idx]
@@ -187,10 +195,20 @@ def bootstrap_ci(y: np.ndarray, p: np.ndarray, threshold: float) -> dict:
         values["Brier"].append(np.mean((pp - yy) ** 2))
         values["Sensitivity"].append(np.mean(pred[yy == 1]))
         values["Specificity"].append(np.mean(~pred[yy == 0]))
+        intercept, slope = calibration(yy, pp)
+        values["Calibration_Intercept"].append(intercept)
+        values["Calibration_Slope"].append(slope)
     output = {}
     for key, samples in values.items():
-        output[f"{key}_CI_Lower"] = float(np.percentile(samples, 2.5))
-        output[f"{key}_CI_Upper"] = float(np.percentile(samples, 97.5))
+        finite_samples = np.asarray(samples, dtype=float)
+        finite_samples = finite_samples[np.isfinite(finite_samples)]
+        output[f"{key}_Bootstrap_Valid"] = int(len(finite_samples))
+        if len(finite_samples) == 0:
+            output[f"{key}_CI_Lower"] = np.nan
+            output[f"{key}_CI_Upper"] = np.nan
+            continue
+        output[f"{key}_CI_Lower"] = float(np.percentile(finite_samples, 2.5))
+        output[f"{key}_CI_Upper"] = float(np.percentile(finite_samples, 97.5))
     return output
 
 
