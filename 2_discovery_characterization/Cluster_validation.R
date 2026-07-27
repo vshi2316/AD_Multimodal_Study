@@ -52,32 +52,38 @@ cat("========================================================================\\n
 # ============================================================================
 # Helper functions
 # ============================================================================
+label_permutations <- function(values) {
+  if (length(values) == 1) return(matrix(values, nrow = 1))
+  do.call(rbind, lapply(seq_along(values), function(i) {
+    cbind(values[i], label_permutations(values[-i]))
+  }))
+}
+
+align_cluster_labels <- function(reference, candidate, k) {
+  contingency <- table(
+    factor(reference, levels = seq_len(k)),
+    factor(candidate, levels = seq_len(k))
+  )
+  permutations <- label_permutations(seq_len(k))
+  scores <- apply(permutations, 1, function(permutation) {
+    sum(contingency[cbind(seq_len(k), permutation)])
+  })
+  selected <- permutations[which.max(scores), ]
+  mapping <- integer(k)
+  mapping[selected] <- seq_len(k)
+  as.integer(mapping[candidate])
+}
+
 calculate_jaccard_index <- function(labels_true, labels_pred) {
-  unique_true <- sort(unique(labels_true))
-  unique_pred <- sort(unique(labels_pred))
-  D <- max(length(unique_true), length(unique_pred))
-  w <- matrix(0, nrow = D, ncol = D)
-  for (i in seq_along(unique_true)) {
-    for (j in seq_along(unique_pred)) {
-      w[i, j] <- sum(labels_true == unique_true[i] &
-                       labels_pred == unique_pred[j])
-    }
-  }
-  matched <- rep(FALSE, D)
-  jaccards <- c()
-  for (i in seq_along(unique_true)) {
-    best_j <- which.max(w[i, ] * (!matched))
-    if (w[i, best_j] > 0) {
-      matched[best_j] <- TRUE
-      inter <- sum(labels_true == unique_true[i] &
-                     labels_pred == unique_pred[best_j])
-      uni   <- sum(labels_true == unique_true[i] |
-                     labels_pred == unique_pred[best_j])
-      jaccards <- c(jaccards, inter / uni)
-    }
-  }
-  if (length(jaccards) == 0) return(0)
-  mean(jaccards)
+  clusters <- sort(unique(labels_true))
+  jaccards <- vapply(clusters, function(cluster_id) {
+    true_members <- labels_true == cluster_id
+    predicted_members <- labels_pred == cluster_id
+    union_n <- sum(true_members | predicted_members)
+    if (union_n == 0) return(NA_real_)
+    sum(true_members & predicted_members) / union_n
+  }, numeric(1))
+  mean(jaccards, na.rm = TRUE)
 }
 calculate_PAC <- function(cm, lower = 0.1, upper = 0.9) {
   lt <- cm[lower.tri(cm)]
@@ -90,10 +96,65 @@ calculate_sample_stability <- function(boot_matrix, original_labels) {
     obs <- boot_matrix[i, ]
     obs <- obs[!is.na(obs)]
     if (length(obs) < 2) { stability[i] <- NA; next }
-    mode_cl <- as.numeric(names(sort(table(obs), decreasing = TRUE)[1]))
-    stability[i] <- sum(obs == mode_cl) / length(obs)
+    stability[i] <- mean(obs == original_labels[i])
   }
   stability
+}
+
+evaluate_latent_stability <- function(latent_matrix, original_labels, k,
+                                      n_bootstrap, stability_threshold) {
+  n_samples <- nrow(latent_matrix)
+  boot_matrix <- matrix(NA_integer_, nrow = n_samples, ncol = n_bootstrap)
+  ari_values <- numeric(n_bootstrap)
+  jaccard_values <- numeric(n_bootstrap)
+
+  for (bootstrap_index in seq_len(n_bootstrap)) {
+    set.seed(bootstrap_index)
+    sampled_index <- sample(
+      seq_len(n_samples), floor(n_samples * 0.8), replace = TRUE
+    )
+    fit <- kmeans(
+      latent_matrix[sampled_index, , drop = FALSE],
+      centers = k,
+      nstart = 20,
+      iter.max = 100
+    )
+    aligned <- align_cluster_labels(
+      original_labels[sampled_index], fit$cluster, k
+    )
+    observed_index <- unique(sampled_index)
+    for (participant_index in observed_index) {
+      first_position <- which(sampled_index == participant_index)[1]
+      boot_matrix[participant_index, bootstrap_index] <- aligned[first_position]
+    }
+    ari_values[bootstrap_index] <- adjustedRandIndex(
+      original_labels[sampled_index], aligned
+    )
+    jaccard_values[bootstrap_index] <- calculate_jaccard_index(
+      original_labels[sampled_index], aligned
+    )
+  }
+
+  sample_stability <- calculate_sample_stability(boot_matrix, original_labels)
+  silhouette_values <- silhouette(original_labels, dist(latent_matrix))
+  summary <- data.frame(
+    K = k,
+    ARI_Mean = mean(ari_values, na.rm = TRUE),
+    ARI_SD = sd(ari_values, na.rm = TRUE),
+    Jaccard_Mean = mean(jaccard_values, na.rm = TRUE),
+    Jaccard_SD = sd(jaccard_values, na.rm = TRUE),
+    Sample_Stability = mean(sample_stability, na.rm = TRUE),
+    Stable_Fraction = mean(sample_stability > stability_threshold, na.rm = TRUE),
+    Silhouette = mean(silhouette_values[, 3]),
+    stringsAsFactors = FALSE
+  )
+  list(
+    summary = summary,
+    sample_stability = sample_stability,
+    ari_values = ari_values,
+    jaccard_values = jaccard_values,
+    silhouette_values = silhouette_values
+  )
 }
 wilson_ci <- function(x, n, alpha = 0.05) {
   z <- qnorm(1 - alpha / 2)
@@ -132,7 +193,7 @@ cat(sprintf("  CSF: %d biomarkers\n", ncol(csf_data) - 1))
 outcome <- read.csv(file.path(data_dir, opt$outcome_file),
                     stringsAsFactors = FALSE)
 cat(sprintf("  Outcome: %d rows\n", nrow(outcome)))
-# Merge all — drop overlapping columns from clinical to avoid .x/.y duplicates
+# Drop overlapping clinical columns before merging to avoid .x and .y duplicates.
 # assignments already has: ID, VAE_Subtype, Direct_KMeans_Subtype, SEX, AGE, AD_Conversion
 clinical_cols_to_add <- setdiff(colnames(clinical), colnames(assignments))
 clinical_slim <- clinical[, c("ID", clinical_cols_to_add), drop = FALSE]
@@ -418,7 +479,7 @@ for (feat in mri_cols) {
   tryCatch({
     aov_fit <- aov(fml_anc, data = df)
     s <- summary(aov_fit)[[1]]
-    # Fix: rownames have trailing whitespace — use grepl to match
+  # Match row names after allowing for trailing whitespace.
     rn <- trimws(rownames(s))
     sub_row <- which(rn == "Subtype_F")
     res_row <- which(rn == "Residuals")
@@ -532,7 +593,7 @@ feature_matrix <- df %>%
   scale() %>%
   t()
 n_samples <- ncol(feature_matrix)
-# Consensus clustering — use relative path to avoid double-concatenation bug
+# Use a relative output path for consensus clustering.
 old_wd <- getwd()
 setwd(output_dir)
 set.seed(42)
@@ -560,61 +621,73 @@ if (length(opt_k) == 0) opt_k <- 3
 cat(sprintf("  Optimal K: %d\n", opt_k))
 write.csv(stab_tab, file.path(output_dir, "Consensus_Stability.csv"),
           row.names = FALSE)
-# Bootstrap on latent space
+# Bootstrap comparison of the K = 2 and K = 3 latent solutions
 bootstrap_completed <- FALSE
 if (latent_available) {
-  cat("\n  Bootstrap on VAE latent space...\n")
+  cat("\n  Bootstrap comparison on the VAE latent space...\n")
   lat_cols <- grep("^Z\\d+", colnames(latent_data), value = TRUE)
   lat_mat  <- as.matrix(latent_data[, lat_cols])
-  orig_lab <- df$Subtype
-  k <- length(unique(orig_lab))
-  n_boot <- nrow(lat_mat)
+  set.seed(42)
+  k2_labels <- kmeans(lat_mat, centers = 2, nstart = 50, iter.max = 100)$cluster
+  labels_by_k <- list(`2` = k2_labels, `3` = as.integer(df$Subtype))
+  stability_results <- lapply(c(2, 3), function(k_value) {
+    evaluate_latent_stability(
+      lat_mat,
+      labels_by_k[[as.character(k_value)]],
+      k_value,
+      n_bootstrap,
+      stability_threshold
+    )
+  })
+  k_comparison <- do.call(rbind, lapply(stability_results, `[[`, "summary"))
+  write.csv(
+    k_comparison,
+    file.path(output_dir, "K2_K3_Quantitative_Comparison.csv"),
+    row.names = FALSE
+  )
+  sample_stability_all <- do.call(rbind, lapply(seq_along(stability_results), function(i) {
+    k_value <- c(2, 3)[i]
+    data.frame(
+      ID = df$ID,
+      K = k_value,
+      Subtype = labels_by_k[[as.character(k_value)]],
+      Stability = stability_results[[i]]$sample_stability,
+      Stable = stability_results[[i]]$sample_stability > stability_threshold
+    )
+  }))
+  write.csv(
+    sample_stability_all,
+    file.path(output_dir, "K2_K3_Sample_Stability.csv"),
+    row.names = FALSE
+  )
 
-  boot_mat <- matrix(NA, nrow = n_boot, ncol = n_bootstrap)
-  ari_vals <- numeric(n_bootstrap)
-  jac_vals <- numeric(n_bootstrap)
-
-  for (b in 1:n_bootstrap) {
-    set.seed(b)
-    idx <- sample(1:n_boot, floor(n_boot * 0.8), replace = TRUE)
-    bkm <- kmeans(lat_mat[idx, ], centers = k, nstart = 20, iter.max = 100)
-    uid <- unique(idx)
-    for (i in seq_along(uid)) {
-      boot_mat[uid[i], b] <- bkm$cluster[which(idx == uid[i])[1]]
-    }
-    ari_vals[b] <- adjustedRandIndex(orig_lab[idx], bkm$cluster)
-    jac_vals[b] <- calculate_jaccard_index(orig_lab[idx], bkm$cluster)
-    if (b %% 25 == 0) cat(sprintf("    %d/%d\n", b, n_bootstrap))
-  }
-
-  samp_stab <- calculate_sample_stability(boot_mat, orig_lab)
-  m_ari  <- mean(ari_vals, na.rm = TRUE)
-  s_ari  <- sd(ari_vals, na.rm = TRUE)
-  m_jac  <- mean(jac_vals, na.rm = TRUE)
-  s_jac  <- sd(jac_vals, na.rm = TRUE)
-  m_stab <- mean(samp_stab, na.rm = TRUE)
+  k3_result <- stability_results[[2]]
+  k <- 3
+  orig_lab <- labels_by_k[["3"]]
+  ari_vals <- k3_result$ari_values
+  jac_vals <- k3_result$jaccard_values
+  samp_stab <- k3_result$sample_stability
+  sil_lat <- k3_result$silhouette_values
+  m_ari <- k3_result$summary$ARI_Mean
+  s_ari <- k3_result$summary$ARI_SD
+  m_jac <- k3_result$summary$Jaccard_Mean
+  s_jac <- k3_result$summary$Jaccard_SD
+  m_stab <- k3_result$summary$Sample_Stability
+  avg_sil <- k3_result$summary$Silhouette
   n_stab <- sum(samp_stab > stability_threshold, na.rm = TRUE)
-  n_val  <- sum(!is.na(samp_stab))
+  n_val <- sum(!is.na(samp_stab))
 
-  sil_lat <- silhouette(orig_lab, dist(lat_mat))
-  avg_sil <- mean(sil_lat[, 3])
-
-  cat(sprintf("\n  Bootstrap results:\n"))
-  cat(sprintf("    ARI: %.3f +/- %.3f\n", m_ari, s_ari))
-  cat(sprintf("    Jaccard: %.3f +/- %.3f\n", m_jac, s_jac))
-  cat(sprintf("    Sample stability: %.3f\n", m_stab))
-  cat(sprintf("    Stable (>%.2f): %d/%d (%.1f%%)\n",
-              stability_threshold, n_stab, n_val, 100 * n_stab / n_val))
-  cat(sprintf("    Silhouette: %.3f\n", avg_sil))
+  cat("\n  K = 2 and K = 3 comparison:\n")
+  print(k_comparison)
 
   boot_sum <- data.frame(
     Metric = c("ARI_Mean", "ARI_SD", "Jaccard_Mean", "Jaccard_SD",
                "Sample_Stability", "Stable_Fraction", "Silhouette"),
-    Value = c(m_ari, s_ari, m_jac, s_jac, m_stab, n_stab / n_val, avg_sil))
+    Value = unlist(k3_result$summary[1, -1], use.names = FALSE))
   write.csv(boot_sum, file.path(output_dir, "Bootstrap_Summary.csv"),
             row.names = FALSE)
 
-  stab_df <- data.frame(ID = df$ID, Subtype = df$Subtype,
+  stab_df <- data.frame(ID = df$ID, Subtype = orig_lab,
                         Stability = samp_stab,
                         Stable = samp_stab > stability_threshold)
   write.csv(stab_df, file.path(output_dir, "Bootstrap_Sample_Stability.csv"),
