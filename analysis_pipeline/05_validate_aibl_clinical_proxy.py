@@ -137,7 +137,11 @@ def main() -> None:
                 "AUC_CI_Upper",
                 "Brier",
                 "Calibration_Intercept",
+                "Calibration_Intercept_CI_Lower",
+                "Calibration_Intercept_CI_Upper",
                 "Calibration_Slope",
+                "Calibration_Slope_CI_Lower",
+                "Calibration_Slope_CI_Upper",
                 "Sensitivity",
                 "Specificity",
             ]
