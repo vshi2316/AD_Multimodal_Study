@@ -124,12 +124,28 @@ def main() -> None:
     performance = pd.DataFrame(performance_rows)
     performance.to_csv(OUT / "nonoverlapping_adni_validation_performance.csv", index=False)
 
-    phase_summary = (
+    phase_counts = (
         eligible.groupby("Baseline_PHASE")["Strict36_Outcome"]
         .agg(N="count", Events="sum", Event_Rate="mean")
         .reset_index()
     )
-    phase_summary.to_csv(OUT / "nonoverlapping_adni_validation_subgroups.csv", index=False)
+    subgroup_rows = [dict(row, Subgroup="all") for row in performance_rows]
+    for phase, phase_data in eligible.groupby("Baseline_PHASE", sort=True):
+        y_phase = phase_data["Strict36_Outcome"].astype(int).to_numpy()
+        if len(np.unique(y_phase)) < 2:
+            continue
+        for name in feature_sets:
+            probability = phase_data[f"{name}_probability"].to_numpy(dtype=float)
+            threshold = prior_summary[name]["locked_threshold_from_oof"]
+            result = model_helpers.point_metrics(y_phase, probability, threshold)
+            result.update(model_helpers.bootstrap_ci(y_phase, probability, threshold))
+            result.update({"Subgroup": phase, "Model": name})
+            subgroup_rows.append(result)
+    subgroup_performance = pd.DataFrame(subgroup_rows)
+    subgroup_performance.to_csv(
+        OUT / "nonoverlapping_adni_validation_subgroups.csv", index=False
+    )
+    phase_counts.to_csv(OUT / "nonoverlapping_adni_validation_phase_counts.csv", index=False)
     summary = {
         "baseline_mci_candidates_after_discovery_exclusion": int(len(endpoints)),
         "strict36_endpoint_eligible_before_feature_filter": int(endpoints["Strict36_Outcome"].notna().sum()),
@@ -138,7 +154,7 @@ def main() -> None:
         "nonevents": int((y_test == 0).sum()),
         "any_csf_marker_available_n": int(eligible[model_helpers.CSF].notna().any(axis=1).sum()),
         "all_three_csf_markers_available_n": int(eligible[model_helpers.CSF].notna().all(axis=1).sum()),
-        "phases": phase_summary.to_dict(orient="records"),
+        "phases": phase_counts.to_dict(orient="records"),
     }
     with (OUT / "nonoverlapping_adni_validation_summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, ensure_ascii=False)
@@ -155,7 +171,11 @@ def main() -> None:
                 "AUC_CI_Upper",
                 "Brier",
                 "Calibration_Intercept",
+                "Calibration_Intercept_CI_Lower",
+                "Calibration_Intercept_CI_Upper",
                 "Calibration_Slope",
+                "Calibration_Slope_CI_Lower",
+                "Calibration_Slope_CI_Upper",
                 "Sensitivity",
                 "Specificity",
                 "FP",
