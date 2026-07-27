@@ -16,6 +16,7 @@ TEST_FILE = ROOT / "Analysis_Inputs" / "AI_vs_Clinician_Test" / "independent_tes
 DISCOVERY_STANDARDIZED_DIR = (
     ROOT / "Derived_Inputs" / "Discovery_CSF_Cohort"
 )
+FEATURE_MANIFEST = HERE / "FEATURE_MANIFEST.json"
 
 MRI_FILE = RAW / "sMRI" / "UCSF - Cross-Sectional FreeSurfer (7.x).csv"
 DEMOG_FILE = RAW / "LINES" / "Subject Demographics.csv"
@@ -32,7 +33,10 @@ def numeric(series: pd.Series) -> pd.Series:
 
 def first_baseline(frame: pd.DataFrame, visit_col: str) -> pd.DataFrame:
     visit = frame[visit_col].astype(str).str.lower().str.strip()
-    return frame.loc[visit.isin(["bl", "sc"])].drop_duplicates("RID", keep="first")
+    baseline = frame.loc[visit.isin(["bl", "sc"])].copy()
+    baseline["_visit_order"] = visit.loc[baseline.index].map({"bl": 0, "sc": 1})
+    baseline = baseline.sort_values(["RID", "_visit_order"], kind="stable")
+    return baseline.drop_duplicates("RID", keep="first").drop(columns="_visit_order")
 
 
 def load_raw_feature_table(mri_features: list[str]) -> pd.DataFrame:
@@ -49,7 +53,7 @@ def load_raw_feature_table(mri_features: list[str]) -> pd.DataFrame:
         low_memory=False,
     ).drop_duplicates("RID", keep="first")
     demog["Education"] = numeric(demog["PTEDUCAT"])
-    demog.loc[demog["Education"].isna() | (demog["Education"] == 0), "Education"] = 15
+    demog.loc[demog["Education"] == 0, "Education"] = np.nan
     gender_text = demog["PTGENDER"].astype(str).str.lower()
     demog["Gender"] = np.where(
         gender_text.isin(["female", "2", "2.0"]),
@@ -128,8 +132,18 @@ def compare_extraction(test: pd.DataFrame, extracted: pd.DataFrame, features: li
 
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
+    with FEATURE_MANIFEST.open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    mri_features = manifest["supervised_model_mri_features"]
     standardized_mri = pd.read_csv(DISCOVERY_STANDARDIZED_DIR / "RNA_plasma.csv", nrows=2)
-    mri_features = [col for col in standardized_mri.columns if col.startswith("ST")]
+    missing_manifest_features = [
+        feature for feature in mri_features if feature not in standardized_mri.columns
+    ]
+    if missing_manifest_features:
+        raise ValueError(
+            "MRI features listed in FEATURE_MANIFEST.json are absent from RNA_plasma.csv: "
+            + ", ".join(missing_manifest_features)
+        )
     raw_features = load_raw_feature_table(mri_features)
 
     discovery_endpoints = pd.read_csv(OUT / "adni_discovery_endpoints.csv")
