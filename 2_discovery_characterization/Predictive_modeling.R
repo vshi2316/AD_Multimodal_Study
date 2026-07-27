@@ -320,7 +320,7 @@ models_list <- list(
   "XGBoost"       = model_xgb
 )
 # ==============================================================================
-# 7. Model Evaluation — OUT-OF-FOLD CV Predictions
+# 7. Model evaluation with out-of-fold cross-validation predictions
 # ==============================================================================
 # CRITICAL FIX: All metrics (AUC CI, Precision, Recall, F1, Brier, Youden
 # threshold) are computed from OUT-OF-FOLD CV predictions (model$pred),
@@ -549,7 +549,7 @@ p_imp <- ggplot(top20, aes(x = reorder(Label, Importance),
   theme(plot.title = element_text(face = "bold"))
 ggsave(file.path(output_dir, "Feature_Importance_Top20.png"),
        plot = p_imp, width = 10, height = 8, dpi = 300)
-# ROC Curves — using OUT-OF-FOLD CV predictions
+# Receiver operating characteristic curves from out-of-fold predictions
 roc_plot_data <- data.frame()
 for (mn in names(models_list)) {
   m <- models_list[[mn]]
@@ -594,7 +594,7 @@ p_comp <- ggplot(model_comparison,
   theme(plot.title = element_text(face = "bold"))
 ggsave(file.path(output_dir, "Model_Comparison_AUC.png"),
        plot = p_comp, width = 10, height = 6, dpi = 300)
-# Calibration Plot for best model — using OUT-OF-FOLD CV predictions
+# Calibration plot for the best model using out-of-fold predictions
 best_cv_preds <- best_model$pred
 best_bt <- best_model$bestTune
 for (pn in colnames(best_bt)) {
