@@ -23,7 +23,9 @@ STEPS = [
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the complete multimodal analysis pipeline.")
+    parser = argparse.ArgumentParser(
+        description="Run the supervised prediction and five-reader analysis pipeline."
+    )
     parser.add_argument("--data-root", type=Path, required=True, help="Local restricted-data root.")
     parser.add_argument("--output-dir", type=Path, default=HERE / "outputs", help="Tabular output directory.")
     parser.add_argument("--figure-dir", type=Path, default=HERE / "submission_figures", help="Figure output directory.")
