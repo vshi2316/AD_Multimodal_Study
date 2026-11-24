@@ -39,29 +39,29 @@ set.seed(42)
 # Suffix: CV = cortical volume, TA = cortical thickness (average),
 #          TS = cortical thickness (std), SA = surface area, SV = subcortical vol
 st_to_anatomy <- c(
-  "ST101SV" = "Left Hippocampus (Vol)",
-  "ST102CV" = "Right Paracentral (Vol)",
-  "ST102TA" = "Right Paracentral (Thk)",
-  "ST102TS" = "Right Paracentral (ThkStd)",
-  "ST103CV" = "Right Parahippocampal (Vol)",
-  "ST103TA" = "Right Parahippocampal (Thk)",
-  "ST103TS" = "Right Parahippocampal (ThkStd)",
-  "ST104CV" = "Right Pars Opercularis (Vol)",
-  "ST104TA" = "Right Pars Opercularis (Thk)",
-  "ST104TS" = "Right Pars Opercularis (ThkStd)",
-  "ST105CV" = "Right Pars Orbitalis (Vol)",
-  "ST105TA" = "Right Pars Orbitalis (Thk)",
-  "ST105TS" = "Right Pars Orbitalis (ThkStd)",
-  "ST106CV" = "Right Pars Triangularis (Vol)",
-  "ST106TA" = "Right Pars Triangularis (Thk)",
-  "ST106TS" = "Right Pars Triangularis (ThkStd)",
-  "ST107CV" = "Right Pericalcarine (Vol)",
-  "ST107TA" = "Right Pericalcarine (Thk)",
-  "ST107TS" = "Right Pericalcarine (ThkStd)",
-  "ST108CV" = "Right Postcentral (Vol)",
-  "ST108TA" = "Right Postcentral (Thk)",
-  "ST108TS" = "Right Postcentral (ThkStd)",
-  "ST109CV" = "Right Posterior Cingulate (Vol)",
+  "ST101SV" = "Right pallidal volume",
+  "ST102CV" = "Right paracentral volume",
+  "ST102TA" = "Right paracentral thickness",
+  "ST102TS" = "Right paracentral thickness SD",
+  "ST103CV" = "Right parahippocampal volume",
+  "ST103TA" = "Right parahippocampal thickness",
+  "ST103TS" = "Right parahippocampal thickness SD",
+  "ST104CV" = "Right pars opercularis volume",
+  "ST104TA" = "Right pars opercularis thickness",
+  "ST104TS" = "Right pars opercularis thickness SD",
+  "ST105CV" = "Right pars orbitalis volume",
+  "ST105TA" = "Right pars orbitalis thickness",
+  "ST105TS" = "Right pars orbitalis thickness SD",
+  "ST106CV" = "Right pars triangularis volume",
+  "ST106TA" = "Right pars triangularis thickness",
+  "ST106TS" = "Right pars triangularis thickness SD",
+  "ST107CV" = "Right pericalcarine volume",
+  "ST107TA" = "Right pericalcarine thickness",
+  "ST107TS" = "Right pericalcarine thickness SD",
+  "ST108CV" = "Right postcentral volume",
+  "ST108TA" = "Right postcentral thickness",
+  "ST108TS" = "Right postcentral thickness SD",
+  "ST109CV" = "Right posterior cingulate volume",
   "ST109TA" = "Right Posterior Cingulate (Thk)",
   "ST109TS" = "Right Posterior Cingulate (ThkStd)",
   "ST110CV" = "Right Precentral (Vol)",
@@ -102,27 +102,27 @@ st_to_anatomy <- c(
 )
 # Network assignment for aggregation
 st_to_network <- c(
-  "ST101SV" = "Limbic", "ST118SV" = "Limbic", "ST119SV" = "Limbic",
-  "ST52SV"  = "Limbic",
-  "ST103CV" = "Limbic", "ST103TA" = "Limbic", "ST103TS" = "Limbic",
-  "ST24CV"  = "Limbic", "ST24TA"  = "Limbic",
-  "ST29CV"  = "Limbic", "ST29TA"  = "Limbic",
-  "ST109CV" = "DMN", "ST109TA" = "DMN", "ST109TS" = "DMN",
-  "ST111CV" = "DMN", "ST111TA" = "DMN", "ST111TS" = "DMN",
-  "ST44CV"  = "DMN", "ST44TA"  = "DMN",
-  "ST40CV"  = "DMN", "ST40TA"  = "DMN",
-  "ST113CV" = "DMN", "ST113TA" = "DMN",
-  "ST31CV"  = "DMN", "ST31TA"  = "DMN",
-  "ST117CV" = "FPN", "ST117TA" = "FPN",
-  "ST115CV" = "FPN", "ST115TA" = "FPN",
-  "ST104CV" = "FPN", "ST104TA" = "FPN", "ST104TS" = "FPN",
-  "ST106CV" = "FPN", "ST106TA" = "FPN", "ST106TS" = "FPN",
-  "ST105CV" = "FPN", "ST105TA" = "FPN", "ST105TS" = "FPN",
-  "ST114CV" = "FPN", "ST114TA" = "FPN",
-  "ST102CV" = "Sensorimotor", "ST102TA" = "Sensorimotor", "ST102TS" = "Sensorimotor",
-  "ST108CV" = "Sensorimotor", "ST108TA" = "Sensorimotor", "ST108TS" = "Sensorimotor",
-  "ST110CV" = "Sensorimotor", "ST110TA" = "Sensorimotor", "ST110TS" = "Sensorimotor",
-  "ST107CV" = "Visual", "ST107TA" = "Visual", "ST107TS" = "Visual",
+  "ST101SV" = "Parahippocampal and pallidal", "ST118SV" = "Parahippocampal and pallidal", "ST119SV" = "Parahippocampal and pallidal",
+  "ST52SV"  = "Parahippocampal and pallidal",
+  "ST103CV" = "Parahippocampal and pallidal", "ST103TA" = "Parahippocampal and pallidal", "ST103TS" = "Parahippocampal and pallidal",
+  "ST24CV"  = "Parahippocampal and pallidal", "ST24TA"  = "Parahippocampal and pallidal",
+  "ST29CV"  = "Parahippocampal and pallidal", "ST29TA"  = "Parahippocampal and pallidal",
+  "ST109CV" = "Posterior cingulate", "ST109TA" = "Posterior cingulate", "ST109TS" = "Posterior cingulate",
+  "ST111CV" = "Posterior cingulate", "ST111TA" = "Posterior cingulate", "ST111TS" = "Posterior cingulate",
+  "ST44CV"  = "Posterior cingulate", "ST44TA"  = "Posterior cingulate",
+  "ST40CV"  = "Posterior cingulate", "ST40TA"  = "Posterior cingulate",
+  "ST113CV" = "Posterior cingulate", "ST113TA" = "Posterior cingulate",
+  "ST31CV"  = "Posterior cingulate", "ST31TA"  = "Posterior cingulate",
+  "ST117CV" = "Inferior frontal", "ST117TA" = "Inferior frontal",
+  "ST115CV" = "Inferior frontal", "ST115TA" = "Inferior frontal",
+  "ST104CV" = "Inferior frontal", "ST104TA" = "Inferior frontal", "ST104TS" = "Inferior frontal",
+  "ST106CV" = "Inferior frontal", "ST106TA" = "Inferior frontal", "ST106TS" = "Inferior frontal",
+  "ST105CV" = "Inferior frontal", "ST105TA" = "Inferior frontal", "ST105TS" = "Inferior frontal",
+  "ST114CV" = "Inferior frontal", "ST114TA" = "Inferior frontal",
+  "ST102CV" = "Paracentral and postcentral", "ST102TA" = "Paracentral and postcentral", "ST102TS" = "Paracentral and postcentral",
+  "ST108CV" = "Paracentral and postcentral", "ST108TA" = "Paracentral and postcentral", "ST108TS" = "Paracentral and postcentral",
+  "ST110CV" = "Paracentral and postcentral", "ST110TA" = "Paracentral and postcentral", "ST110TS" = "Paracentral and postcentral",
+  "ST107CV" = "Pericalcarine", "ST107TA" = "Pericalcarine", "ST107TS" = "Pericalcarine",
   "ST112CV" = "Salience", "ST112TA" = "Salience",
   "ST116CV" = "Auditory", "ST116TA" = "Auditory",
   "ST32CV"  = "Temporal", "ST32TA"  = "Temporal",
@@ -543,7 +543,7 @@ for (net in networks) {
                                             na.rm = TRUE)
   net_col <- paste0("Net_", net)
 
-  fit <- aov(as.formula(paste0(net_col, " ~ Subtype")), data = master)
+  fit <- aov(as.formula(paste0("`", net_col, "` ~ Subtype")), data = master)
   s <- summary(fit)
   f_val <- s[[1]]$`F value`[1]
   p_val <- s[[1]]$`Pr(>F)`[1]
@@ -667,7 +667,7 @@ if (nrow(network_results) > 0) {
     scale_fill_manual(values = c("Subtype 1" = "#4472C4",
                                  "Subtype 2" = "#8064A2",
                                  "Subtype 3" = "#C0504D")) +
-    labs(title = "Network-Level MRI Profiles by Subtype",
+    labs(title = "Regional MRI composites by group",
          subtitle = "Mean z-score composites across brain networks",
          y = "Mean z-score", x = NULL, fill = NULL) +
     theme_classic(base_size = 12) +
@@ -789,4 +789,3 @@ cat("Step 22: MRI Subtype Characterization Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report: %s\n", report_path))
 cat(sprintf("Output: %s\n", output_dir))
-
