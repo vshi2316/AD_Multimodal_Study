@@ -20,7 +20,8 @@ from statsmodels.stats.anova import anova_lm
 ROOT = Path(os.environ.get("AD_MULTIMODAL_DATA_ROOT", ".")).expanduser().resolve()
 OUT = Path(os.environ.get("AD_MULTIMODAL_OUTPUT_DIR", str(HERE / "outputs"))).expanduser()
 DISCOVERY_DIR = ROOT / "Derived_Inputs" / "Discovery_CSF_Cohort"
-SUBTYPE_FILE = ROOT / "Analysis_Inputs" / "VAE_Output" / "subtype_assignments.csv"
+SUBTYPE_FILE = Path(os.environ.get("AD_MULTIMODAL_SUBTYPE_FILE",
+    str(ROOT / "Analysis_Inputs" / "VAE_Output" / "subtype_assignments.csv")))
 
 
 def bh_adjust(p_values: list[float]) -> np.ndarray:
