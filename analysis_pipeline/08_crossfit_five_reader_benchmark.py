@@ -29,10 +29,12 @@ def load_module(filename: str, name: str):
     return module
 
 
-def crossfit_discovery(model_helpers, x: pd.DataFrame, y: np.ndarray) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+def crossfit_discovery(model_helpers, x: pd.DataFrame, y: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
     outer = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
     probabilities = np.full(len(y), np.nan)
     predictions = np.full(len(y), -1, dtype=int)
+    fold_assignments = np.full(len(y), -1, dtype=int)
+    case_thresholds = np.full(len(y), np.nan)
     rows = []
     for fold, (train_idx, test_idx) in enumerate(outer.split(x, y), start=1):
         inner = StratifiedKFold(n_splits=3, shuffle=True, random_state=SEED + fold)
@@ -59,6 +61,8 @@ def crossfit_discovery(model_helpers, x: pd.DataFrame, y: np.ndarray) -> tuple[n
         fold_probability = search.predict_proba(x.iloc[test_idx])[:, 1]
         probabilities[test_idx] = fold_probability
         predictions[test_idx] = (fold_probability >= threshold).astype(int)
+        fold_assignments[test_idx] = fold
+        case_thresholds[test_idx] = threshold
         rows.append(
             {
                 "Fold": fold,
@@ -71,7 +75,7 @@ def crossfit_discovery(model_helpers, x: pd.DataFrame, y: np.ndarray) -> tuple[n
         )
     if np.isnan(probabilities).any() or (predictions < 0).any():
         raise RuntimeError("Cross-fitted prediction generation was incomplete")
-    return probabilities, predictions, pd.DataFrame(rows)
+    return probabilities, predictions, fold_assignments, case_thresholds, pd.DataFrame(rows)
 
 
 def run_model(model_name: str, features: list[str], model_helpers, rule_helpers) -> dict[str, pd.DataFrame]:
@@ -81,9 +85,13 @@ def run_model(model_name: str, features: list[str], model_helpers, rule_helpers)
     experts = pd.read_csv(EXPERT_FILE)
 
     discovery = discovery.loc[discovery["Strict36_Outcome"].notna()].copy().reset_index(drop=True)
+    flag = holdout["Overlaps_Discovery"].astype(str).str.lower()
+    if not flag.isin(["true", "false"]).all():
+        raise ValueError("Invalid overlap flags")
+    holdout["Overlaps_Discovery"] = flag.eq("true")
     strict_holdout = holdout.loc[holdout["Strict36_Outcome"].notna()].copy()
     y_discovery = discovery["Strict36_Outcome"].astype(int).to_numpy()
-    cross_probability, cross_prediction, folds = crossfit_discovery(
+    cross_probability, cross_prediction, cross_folds, cross_thresholds, folds = crossfit_discovery(
         model_helpers, discovery[features], y_discovery
     )
     global_threshold = model_helpers.choose_youden_threshold(y_discovery, cross_probability)
@@ -98,6 +106,8 @@ def run_model(model_name: str, features: list[str], model_helpers, rule_helpers)
             "RID": discovery["RID"].astype(int),
             "AI_Probability": cross_probability,
             "AI_Prediction": cross_prediction,
+            "Outer_Fold": cross_folds,
+            "Training_Only_Threshold": cross_thresholds,
             "Prediction_Source": "five_fold_crossfitted_discovery_prediction",
         }
     )
@@ -106,6 +116,8 @@ def run_model(model_name: str, features: list[str], model_helpers, rule_helpers)
             "RID": nonoverlap["RID"].astype(int),
             "AI_Probability": external_probability,
             "AI_Prediction": external_prediction,
+            "Outer_Fold": np.nan,
+            "Training_Only_Threshold": global_threshold,
             "Prediction_Source": "frozen_model_nonoverlapping_prediction",
         }
     )
@@ -145,6 +157,10 @@ def run_model(model_name: str, features: list[str], model_helpers, rule_helpers)
         benchmark["Expert_Prediction"],
     ).astype(int)
 
+    if (len(benchmark) != 153 or not benchmark.ID.is_unique
+            or benchmark.N_Experts.ne(5).any()
+            or benchmark.Overlaps_Discovery.sum() != 124):
+        raise ValueError("The 153-case, five-reader benchmark is incomplete")
     y = benchmark["Strict36_Outcome"].astype(int).to_numpy()
     arrays = {
         "Crossfitted_AI": (
@@ -249,6 +265,13 @@ def main() -> None:
             OUT / f"crossfitted_expert_{key}.csv", index=False
         )
 
+    combined = pd.concat(collected["benchmark"], ignore_index=True)
+    for label, filename in [("primary_clinical_csf_mri", "primary_153_case_predictions.csv"),
+                            ("ablation_clinical_mri", "ablation_153_case_predictions.csv")]:
+        one = combined.loc[combined.Analysis_Model == label]
+        if len(one) != 153 or not one.ID.is_unique:
+            raise ValueError(f"Duplicate or missing case predictions for {label}")
+        one.to_csv(OUT / filename, index=False)
     summary = pd.concat(collected["summary"], ignore_index=True)
     performance = pd.concat(collected["performance"], ignore_index=True)
     paired = pd.concat(collected["paired"], ignore_index=True)
