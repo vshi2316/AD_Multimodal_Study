@@ -1,74 +1,57 @@
-library(optparse)
+# A separate frozen clinical classifier supplies nominal classes, with no risk ordering.
 library(dplyr)
 library(survival)
 library(survminer)
-library(pROC)
-library(ggplot2)
-
-option_list <- list(
-  make_option(c("--projection_file"), type = "character", default = "A4_projected_subtypes.csv",
-              help = "Projection output from step9A [default: %default]"),
-  make_option(c("--baseline_file"), type = "character", default = "A4_Baseline_Integrated.csv",
-              help = "A4 baseline file with outcomes [default: %default]"),
-  make_option(c("--output_dir"), type = "character", default = "./step21_results",
-              help = "Output directory [default: %default]"),
-  make_option(c("--id_col"), type = "character", default = "ID",
-              help = "ID column [default: %default]"),
-  make_option(c("--time_col"), type = "character", default = "Followup_Years",
-              help = "Follow-up time column [default: %default]"),
-  make_option(c("--event_col"), type = "character", default = "AD_Conversion",
-              help = "Event indicator column [default: %default]")
-)
-opt <- parse_args(OptionParser(option_list = option_list))
-dir.create(opt$output_dir, showWarnings = FALSE, recursive = TRUE)
-
-proj <- read.csv(opt$projection_file, stringsAsFactors = FALSE)
-base <- read.csv(opt$baseline_file, stringsAsFactors = FALSE)
-proj[[opt$id_col]] <- as.character(proj[[opt$id_col]])
-base[[opt$id_col]] <- as.character(base[[opt$id_col]])
-
-analysis <- proj %>%
-  rename(Projected_Subtype = any_of("Projected_Subtype")) %>%
-  left_join(base, by = opt$id_col)
-
-analysis$Risk_Score <- as.numeric(analysis$Projected_Subtype)
-write.csv(analysis, file.path(opt$output_dir, "step21_a4_projected_subtypes.csv"), row.names = FALSE)
-
-if (all(c(opt$time_col, opt$event_col) %in% names(analysis))) {
-  analysis <- analysis %>% filter(!is.na(.data[[opt$time_col]]), !is.na(.data[[opt$event_col]]), !is.na(Projected_Subtype))
-  analysis$Projected_Subtype <- factor(analysis$Projected_Subtype)
-  surv_obj <- Surv(analysis[[opt$time_col]], as.numeric(analysis[[opt$event_col]]))
-  km_fit <- survfit(surv_obj ~ Projected_Subtype, data = analysis)
-  cox_covars <- c("Age", "Gender", "APOE4_Positive", "MMSE_Baseline")
-  use_covars <- cox_covars[cox_covars %in% names(analysis)]
-  cox_formula <- as.formula(paste("surv_obj ~ Projected_Subtype", if (length(use_covars) > 0) paste("+", paste(use_covars, collapse = " + ")) else ""))
-  cox_fit <- coxph(cox_formula, data = analysis)
-  cox_out <- data.frame(summary(cox_fit)$coefficients)
-  cox_out$Term <- rownames(cox_out)
-  write.csv(cox_out, file.path(opt$output_dir, "step21_a4_cox.csv"), row.names = FALSE)
-
-  roc_obj <- roc(as.numeric(analysis[[opt$event_col]]), analysis$Risk_Score, quiet = TRUE)
-  auc_out <- data.frame(AUC = as.numeric(auc(roc_obj)), CI_Lower = ci.auc(roc_obj)[1], CI_Upper = ci.auc(roc_obj)[3])
-  write.csv(auc_out, file.path(opt$output_dir, "step21_a4_auc.csv"), row.names = FALSE)
-
-  summary_out <- data.frame(
-    Cohort = "A4",
-    Validation_Dimension = "Subtype Transportability",
-    N = nrow(analysis),
-    Events = sum(as.numeric(analysis[[opt$event_col]]), na.rm = TRUE),
-    Event_Rate = mean(as.numeric(analysis[[opt$event_col]]), na.rm = TRUE),
-    Time_Column = opt$time_col,
-    Event_Column = opt$event_col,
-    AUC = auc_out$AUC,
-    CI_Lower = auc_out$CI_Lower,
-    CI_Upper = auc_out$CI_Upper,
-    stringsAsFactors = FALSE
-  )
-  write.csv(summary_out, file.path(opt$output_dir, "step21_a4_summary.csv"), row.names = FALSE)
-
-  pdf(file.path(opt$output_dir, "step21_a4_kaplan_meier.pdf"), width = 7, height = 6)
-  print(ggsurvplot(km_fit, data = analysis, risk.table = TRUE, pval = TRUE))
-  dev.off()
+library(randomForest)
+root <- Sys.getenv("AD_MULTIMODAL_DATA_ROOT")
+out <- file.path(Sys.getenv("AD_MULTIMODAL_RESULTS_DIR"),"a4")
+dir.create(out,recursive=TRUE,showWarnings=FALSE)
+set.seed(42)
+classifier <- readRDS(file.path(root,"Analysis_Inputs/Clinical_Classifier/ADNI_RF_Classifier.rds"))
+base <- read.csv(file.path(root,"Analysis_Inputs/A4/A4_Baseline_Integrated.csv"),check.names=FALSE)
+cdr <- read.csv(file.path(root,"Analysis_Inputs/A4/A4_CDR_Longitudinal.csv"),check.names=FALSE)
+base$BID <- as.character(base$BID)
+cdr$BID <- as.character(cdr$BID)
+if (!"Age_Baseline" %in% names(base)) base$Age_Baseline <- base$Age
+if (!"APOE4_Positive" %in% names(base)) base$APOE4_Positive <- base$APOE4_Carrier
+features <- rownames(classifier$importance)
+stopifnot(setequal(features,c("Age_Baseline","Gender","APOE4_Positive","MMSE_Baseline")),
+          !anyDuplicated(base$BID))
+followup <- cdr %>% mutate(Followup_Months=Week/4.345,
+  Is_Converted=ifelse(!is.na(CDGLOBAL)&CDGLOBAL>0,1L,0L)) %>%
+  arrange(BID,Week) %>% group_by(BID) %>% summarise(
+    AD_Conversion=as.integer(any(Is_Converted==1L)),
+    Time_to_Event_Months=ifelse(AD_Conversion==1L,min(Followup_Months[Is_Converted==1L]),max(Followup_Months)),
+    Followup_Years=Time_to_Event_Months/12,N_Visits=n(),Has_Followup=max(Week)>0,.groups="drop") %>%
+  filter(Followup_Years>0)
+analysis <- base %>% select(-any_of("AD_Conversion")) %>%
+  inner_join(followup,by="BID") %>% filter(Followup_Years>=0.5)
+missing <- data.frame(Variable=features,N=nrow(analysis),
+                     Missing_N=vapply(analysis[features],function(x)sum(is.na(x)),integer(1)))
+write.csv(missing,file.path(out,"baseline_predictor_missingness.csv"),row.names=FALSE)
+prediction_input <- analysis[features]
+for (feature in features) {
+  absent <- is.na(prediction_input[[feature]])
+  if (any(absent)) {
+    value <- if (is.numeric(prediction_input[[feature]])) median(prediction_input[[feature]],na.rm=TRUE) else
+      names(sort(table(prediction_input[[feature]]),decreasing=TRUE))[1]
+    prediction_input[[feature]][absent] <- value
+  }
 }
-
-cat("Saved Step 21 outputs\n")
+analysis$Classifier_Class <- factor(predict(classifier,newdata=prediction_input),levels=1:3)
+analysis$Prediction_Confidence <- apply(predict(classifier,newdata=prediction_input,type="prob"),1,max)
+stopifnot(nrow(analysis)==1147L,!anyDuplicated(analysis$BID))
+write.csv(analysis,file.path(out,"A4_class_predictions.csv"),row.names=FALSE)
+fit <- coxph(Surv(Followup_Years,AD_Conversion)~Classifier_Class+
+               Age_Baseline+Gender+APOE4_Positive+MMSE_Baseline,data=analysis)
+s <- summary(fit)
+cox <- cbind(Term=rownames(s$coefficients),as.data.frame(s$coefficients),as.data.frame(s$conf.int))
+write.csv(cox,file.path(out,"A4_adjusted_cox.csv"),row.names=FALSE)
+km <- survfit(Surv(Followup_Years,AD_Conversion)~Classifier_Class,data=analysis)
+lr <- survdiff(Surv(Followup_Years,AD_Conversion)~Classifier_Class,data=analysis)
+write.csv(data.frame(N=nrow(analysis),Events=sum(analysis$AD_Conversion),
+                    Logrank_P=pchisq(lr$chisq,2,lower.tail=FALSE)),
+          file.path(out,"A4_followup_summary.csv"),row.names=FALSE)
+pdf(file.path(out,"A4_KM.pdf"),width=8,height=7)
+print(ggsurvplot(km,data=analysis,risk.table=TRUE,pval=TRUE,legend.title="Clinical class"))
+dev.off()
