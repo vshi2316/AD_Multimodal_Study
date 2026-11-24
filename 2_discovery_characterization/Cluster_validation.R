@@ -225,20 +225,10 @@ if ("SEX" %in% colnames(df)) {
     df$SEX <- round(df$SEX)
   }
 }
-# Remap subtypes: lowest conversion = 1 (Low-risk), highest = 3 (High-risk)
-conv_rates_raw <- df %>%
-  group_by(VAE_Subtype) %>%
-  summarise(rate = mean(AD_Conversion, na.rm = TRUE), .groups = "drop") %>%
-  arrange(rate)
-remap <- setNames(1:nrow(conv_rates_raw), conv_rates_raw$VAE_Subtype)
-df$Subtype <- remap[as.character(df$VAE_Subtype)]
+# Keep the canonical participant-level group identifiers supplied by the entry.
+df$Subtype <- as.integer(df$VAE_Subtype)
 df$Subtype_F <- factor(df$Subtype, levels = 1:3,
-                       labels = c("Low-risk", "Intermediate", "High-risk"))
-cat("\n  Subtype remapping (ascending conversion rate):\n")
-for (i in 1:nrow(conv_rates_raw)) {
-  cat(sprintf("    VAE_Subtype %d -> Subtype %d (rate=%.1f%%)\n",
-              conv_rates_raw$VAE_Subtype[i], i, conv_rates_raw$rate[i] * 100))
-}
+                       labels = paste("Group", 1:3))
 cat(sprintf("  Total: %d participants, %d converters (%.1f%%)\n\n",
             nrow(df), sum(df$AD_Conversion, na.rm = TRUE),
             mean(df$AD_Conversion, na.rm = TRUE) * 100))
@@ -328,98 +318,7 @@ if ("APOE4_DOSAGE" %in% colnames(df)) {
   p3  <- summary(logit3)$coefficients[, 4]
   print(round(cbind(or3, P = p3), 4))
 }
-# --- Cox regression ---
-time_col_used <- NULL
-time_multiplier <- 1
-if ("Followup_Years" %in% colnames(df) && sum(!is.na(df$Followup_Years)) > 20) {
-  time_col_used <- "Followup_Years"
-  time_multiplier <- 1
-} else if ("Followup_Months" %in% colnames(df) && sum(!is.na(df$Followup_Months)) > 20) {
-  time_col_used <- "Followup_Months"
-  time_multiplier <- 1 / 12
-} else if ("Time_to_Event" %in% colnames(df) && sum(!is.na(df$Time_to_Event)) > 20) {
-  time_col_used <- "Time_to_Event"
-  time_multiplier <- 1 / 12
-}
-
-if (!is.null(time_col_used)) {
-  cat(sprintf("\n  === Cox Regression (using %s) ===\n", time_col_used))
-  df$surv_time <- as.numeric(df[[time_col_used]]) * time_multiplier
-} else {
-  cat("\n  === Cox Regression (sensitivity analysis, proxy time) ===\n")
-  df$surv_time <- ifelse(df$AD_Conversion == 1, 1, 2)
-}
-
-time_metadata <- data.frame(
-  Time_Source = ifelse(is.null(time_col_used), "proxy_time", time_col_used),
-  Used_Proxy_Time = is.null(time_col_used),
-  Available_Time_Columns = ifelse(length(available_time_cols) > 0,
-                                  paste(available_time_cols, collapse = ", "),
-                                  "none"),
-  Nonmissing_Time_Count = ifelse(is.null(time_col_used),
-                                 NA_integer_,
-                                 sum(!is.na(df[[time_col_used]]))),
-  Median_Survival_Time_Years = median(df$surv_time, na.rm = TRUE),
-  stringsAsFactors = FALSE
-)
-write.csv(time_metadata,
-          file.path(output_dir, "Cox_Time_Source_Metadata.csv"),
-          row.names = FALSE)
-
-surv_obj <- Surv(df$surv_time, df$AD_Conversion)
-cox1 <- coxph(surv_obj ~ Subtype_cox, data = df)
-cat("\n  --- Unadjusted Cox ---\n")
-print(summary(cox1))
-fml_cox <- as.formula(paste("surv_obj ~", paste(adj_terms, collapse = " + ")))
-cox2 <- coxph(fml_cox, data = df)
-cat("\n  --- Adjusted Cox ---\n")
-print(summary(cox2))
-if ("APOE4_DOSAGE" %in% colnames(df)) {
-  fml_cox3 <- as.formula(paste("surv_obj ~", paste(adj_terms3, collapse = " + ")))
-  cox3 <- coxph(fml_cox3, data = df)
-  cat("\n  --- Adjusted Cox (+ APOE4) ---\n")
-  print(summary(cox3))
-}
-# Extract HRs
-extract_hr <- function(model, label) {
-  s <- summary(model)
-  ci <- s$conf.int
-  st_rows <- grep("Subtype_cox", rownames(ci))
-  if (length(st_rows) == 0) return(NULL)
-  data.frame(
-    Model = label,
-    Comparison = rownames(ci)[st_rows],
-    HR = ci[st_rows, 1],
-    Lower95 = ci[st_rows, 3],
-    Upper95 = ci[st_rows, 4],
-    P = s$coefficients[st_rows, 5],
-    stringsAsFactors = FALSE
-  )
-}
-hr_all <- rbind(
-  extract_hr(cox1, "Unadjusted"),
-  extract_hr(cox2, "Adj_Age_Sex_Edu")
-)
-if (exists("cox3")) {
-  hr_all <- rbind(hr_all, extract_hr(cox3, "Adj_Age_Sex_Edu_APOE4"))
-}
-cat("\n  === Hazard Ratios Summary ===\n")
-for (i in 1:nrow(hr_all)) {
-  cat(sprintf("    %s | %s: HR=%.3f (%.3f-%.3f), P=%.4f\n",
-              hr_all$Model[i], hr_all$Comparison[i],
-              hr_all$HR[i], hr_all$Lower95[i], hr_all$Upper95[i],
-              hr_all$P[i]))
-}
-write.csv(hr_all, file.path(output_dir, "Cox_Hazard_Ratios.csv"),
-          row.names = FALSE)
-# PH assumption
-tryCatch({
-  ph_test <- cox.zph(cox2)
-  cat("\n  Proportional hazards test:\n")
-  print(ph_test)
-}, error = function(e) {
-  cat(sprintf("\n  PH test skipped: %s\n", e$message))
-})
+# Diagnostic-visit survival is calculated by final/vae_followup.R.
 # Logistic regression as primary (no time assumption)
 cat("\n  --- Logistic regression OR summary ---\n")
 fml_logit <- as.formula(paste("AD_Conversion ~", paste(adj_terms, collapse = " + ")))
@@ -814,13 +713,6 @@ for (i in 1:nrow(conv_table)) {
 }
 cat(sprintf("  Chi-square P=%.4f, Fisher P=%.4f\n\n",
             chi_test$p.value, fisher_test$p.value))
-cat("--- Cox Regression (adjusted) ---\n")
-adj_rows <- hr_all[hr_all$Model == "Adj_Age_Sex_Edu", ]
-for (i in 1:nrow(adj_rows)) {
-  cat(sprintf("  %s: HR=%.3f (%.3f-%.3f), P=%.4f\n",
-              adj_rows$Comparison[i], adj_rows$HR[i],
-              adj_rows$Lower95[i], adj_rows$Upper95[i], adj_rows$P[i]))
-}
 cat(sprintf("\n--- MRI ANOVA ---\n"))
 cat(sprintf("  Significant (FDR<0.05): %d / %d\n",
             sum(mri_results$P_FDR < 0.05), nrow(mri_results)))
@@ -843,4 +735,3 @@ cat("\n\nAll output files in:", output_dir, "\n")
 cat("========================================================================\n")
 cat("Step 14 (K=3) Complete.\n")
 cat("========================================================================\n")
-
