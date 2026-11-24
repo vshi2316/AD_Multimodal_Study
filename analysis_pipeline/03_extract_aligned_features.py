@@ -167,14 +167,50 @@ def main() -> None:
     validation.to_csv(OUT / "raw_extraction_validation_against_test_file.csv", index=False)
 
     discovery = discovery_endpoints.merge(raw_features, on="RID", how="left", validate="one_to_one")
-    discovery.to_csv(OUT / "adni_discovery_raw_aligned_features.csv", index=False)
 
     holdout = holdout_endpoints.merge(raw_features, on="RID", how="left", validate="one_to_one")
     overlap_flag = pd.to_numeric(holdout["RID"], errors="coerce").astype("Int64").isin(
         set(pd.to_numeric(discovery_endpoints["RID"], errors="coerce").dropna().astype(int))
     )
     holdout["Overlaps_Discovery"] = overlap_flag
+    if not test["RID"].is_unique or not test["ID"].is_unique:
+        raise ValueError("Duplicate ID/RID in the screened reader input")
+    screened = test.set_index("RID")
+    for frame in [discovery, holdout]:
+        present = frame["RID"].isin(screened.index)
+        if frame is discovery:
+            present &= frame["Strict36_Outcome"].notna()
+        positions = frame.loc[present, "RID"]
+        for feature in mri_features:
+            frame.loc[present, feature] = numeric(screened.loc[positions, feature]).to_numpy()
+    if len(discovery) != 157 or len(holdout) != 196:
+        raise ValueError("Expected the fixed 157-person discovery and 196-person reader cohorts")
+    discovery.to_csv(OUT / "adni_discovery_raw_aligned_features.csv", index=False)
     holdout.to_csv(OUT / "adni_holdout_raw_aligned_features.csv", index=False)
+    discovery.loc[discovery.Strict36_Outcome.notna()].to_csv(
+        OUT / "development_strict126.csv", index=False)
+    holdout.loc[holdout.Strict36_Outcome.notna()].to_csv(
+        OUT / "reader_strict153.csv", index=False)
+    experts = pd.read_csv(ROOT / "Analysis_Inputs/AI_vs_Clinician_Test/Expert_Predictions_Long.csv")
+    keys = ["CaseID", "Expert"]
+    if (experts.duplicated(keys).any() or len(experts) != 980
+            or experts.Expert.nunique() != 5 or not experts.groupby("CaseID").size().eq(5).all()
+            or set(experts.CaseID) != set(holdout.ID)):
+        raise ValueError("Expected five observed reader ratings for each of 196 cases")
+    for stage in ["Stage1_Prob", "Stage2_Prob"]:
+        experts[stage] = pd.to_numeric(experts[stage], errors="raise")
+        if not experts[stage].between(0, 1).all():
+            raise ValueError(f"Reader {stage} must be a probability on [0, 1]")
+    ratings = experts.merge(holdout[["ID", "Strict36_Outcome"]],
+                            left_on="CaseID", right_on="ID", validate="many_to_one")
+    ratings.loc[ratings.Strict36_Outcome.notna()].to_csv(
+        OUT / "reader_ratings_strict765.csv", index=False)
+    pooled = experts.groupby("CaseID").agg(
+        Expert_Stage1_Prob=("Stage1_Prob", "mean"),
+        Expert_Stage2_Prob=("Stage2_Prob", "mean"),
+        Expert_Stage2_SD=("Stage2_Prob", "std"), N_Experts=("Expert", "nunique")).reset_index()
+    holdout.merge(pooled, left_on="ID", right_on="CaseID", validate="one_to_one").to_csv(
+        OUT / "holdout_reader_master.csv", index=False)
 
     core_validation = validation.loc[validation["Feature"].isin(["MMSE_Baseline", "Education", "APOE4_Copies"] + mri_features)]
     summary = {
