@@ -39,29 +39,29 @@ set.seed(42)
 # 1. ST Code -> Anatomical Name Mapping (consistent with step22)
 # ==============================================================================
 st_to_anatomy <- c(
-  "ST101SV" = "Left Hippocampus (Vol)",
-  "ST102CV" = "Right Paracentral (Vol)",
-  "ST102TA" = "Right Paracentral (Thk)",
-  "ST102TS" = "Right Paracentral (ThkStd)",
-  "ST103CV" = "Right Parahippocampal (Vol)",
-  "ST103TA" = "Right Parahippocampal (Thk)",
-  "ST103TS" = "Right Parahippocampal (ThkStd)",
-  "ST104CV" = "Right Pars Opercularis (Vol)",
-  "ST104TA" = "Right Pars Opercularis (Thk)",
-  "ST104TS" = "Right Pars Opercularis (ThkStd)",
-  "ST105CV" = "Right Pars Orbitalis (Vol)",
-  "ST105TA" = "Right Pars Orbitalis (Thk)",
-  "ST105TS" = "Right Pars Orbitalis (ThkStd)",
-  "ST106CV" = "Right Pars Triangularis (Vol)",
-  "ST106TA" = "Right Pars Triangularis (Thk)",
-  "ST106TS" = "Right Pars Triangularis (ThkStd)",
-  "ST107CV" = "Right Pericalcarine (Vol)",
-  "ST107TA" = "Right Pericalcarine (Thk)",
-  "ST107TS" = "Right Pericalcarine (ThkStd)",
-  "ST108CV" = "Right Postcentral (Vol)",
-  "ST108TA" = "Right Postcentral (Thk)",
-  "ST108TS" = "Right Postcentral (ThkStd)",
-  "ST109CV" = "Right Posterior Cingulate (Vol)",
+  "ST101SV" = "Right pallidal volume",
+  "ST102CV" = "Right paracentral volume",
+  "ST102TA" = "Right paracentral thickness",
+  "ST102TS" = "Right paracentral thickness SD",
+  "ST103CV" = "Right parahippocampal volume",
+  "ST103TA" = "Right parahippocampal thickness",
+  "ST103TS" = "Right parahippocampal thickness SD",
+  "ST104CV" = "Right pars opercularis volume",
+  "ST104TA" = "Right pars opercularis thickness",
+  "ST104TS" = "Right pars opercularis thickness SD",
+  "ST105CV" = "Right pars orbitalis volume",
+  "ST105TA" = "Right pars orbitalis thickness",
+  "ST105TS" = "Right pars orbitalis thickness SD",
+  "ST106CV" = "Right pars triangularis volume",
+  "ST106TA" = "Right pars triangularis thickness",
+  "ST106TS" = "Right pars triangularis thickness SD",
+  "ST107CV" = "Right pericalcarine volume",
+  "ST107TA" = "Right pericalcarine thickness",
+  "ST107TS" = "Right pericalcarine thickness SD",
+  "ST108CV" = "Right postcentral volume",
+  "ST108TA" = "Right postcentral thickness",
+  "ST108TS" = "Right postcentral thickness SD",
+  "ST109CV" = "Right posterior cingulate volume",
   "ST109TA" = "Right Posterior Cingulate (Thk)",
   "ST109TS" = "Right Posterior Cingulate (ThkStd)",
   "ST110CV" = "Right Precentral (Vol)",
@@ -217,28 +217,9 @@ if ("AD_Conversion" %in% colnames(master)) {
   for (st in names(sort(conv_rates, decreasing = TRUE))) {
     cat(sprintf("    Subtype %s: %.1f%%\n", st, conv_rates[st] * 100))
   }
-  # Order: High-risk first
-  subtype_order <- names(sort(conv_rates, decreasing = TRUE))
-} else {
-  subtype_order <- levels(master$Subtype)
 }
-# Subtype labels with risk annotation
-subtype_labels <- setNames(
-  paste0("Subtype ", levels(master$Subtype)),
-  levels(master$Subtype)
-)
-if (!is.null(conv_rates)) {
-  risk_rank <- rank(-conv_rates)
-  risk_names <- c("High-Risk", "Intermediate-Risk", "Low-Risk")
-  for (st in names(conv_rates)) {
-    r <- risk_rank[st]
-    if (r <= length(risk_names)) {
-      subtype_labels[st] <- sprintf("Subtype %s (%s, %.0f%%)",
-                                    st, risk_names[r],
-                                    conv_rates[st] * 100)
-    }
-  }
-}
+subtype_order <- levels(master$Subtype)
+subtype_labels <- setNames(paste("Group", subtype_order), subtype_order)
 # ==============================================================================
 # 4. Define Feature Sets for Signature Analysis
 # ==============================================================================
@@ -439,8 +420,8 @@ plot_4a_data <- profile_long %>%
          Subtype_Label = factor(Subtype_Label,
                                 levels = subtype_labels[subtype_order]))
 # Color palette: ordered by risk
-subtype_colors <- c("#C0504D", "#8064A2", "#4472C4")  # Red, Purple, Blue
-names(subtype_colors) <- subtype_labels[subtype_order]
+subtype_colors <- c("Group 1" = "#4472C4", "Group 2" = "#8064A2",
+                    "Group 3" = "#C0504D")
 p_4a <- ggplot(plot_4a_data,
                aes(x = Feature, y = Mean,
                    group = Subtype_Label, color = Subtype_Label)) +
@@ -497,7 +478,8 @@ ann_colors <- list(
              "Small" = "#2ca02c", "Negligible" = "grey70")
 )
 # Column names: Subtype labels
-colnames(hm_mat) <- paste0("Subtype ", gsub("Subtype_", "", colnames(hm_mat)))
+hm_mat <- hm_mat[, paste0("Subtype_", c(2, 3, 1)), drop = FALSE]
+colnames(hm_mat) <- paste0("Group ", gsub("Subtype_", "", colnames(hm_mat)))
 png(file.path(output_dir, "Figure4B_Signature_Heatmap.png"),
     width = 2000, height = max(1800, nrow(hm_mat) * 45), res = 300)
 pheatmap(hm_mat,
@@ -559,7 +541,7 @@ for (panel_id in names(modality_panels)) {
                   width = 0.2, alpha = 0.5) +
     scale_color_manual(values = subtype_colors) +
     labs(title = sprintf("Figure 4%s: %s Subtype Profiles", panel_id, panel$name),
-         subtitle = "Subtypes ordered by conversion rate. Error bars = SE.",
+         subtitle = "Fixed groups. Error bars = SE.",
          x = NULL, y = "Mean Standardized Value",
          color = "Subtype") +
     theme_minimal(base_size = 11) +
@@ -715,4 +697,3 @@ cat("Step 12: Cluster Signature Analysis Complete!\n")
 cat("============================================================\n")
 cat(sprintf("Report: %s\n", report_path))
 cat(sprintf("Output: %s\n", output_dir))
-
